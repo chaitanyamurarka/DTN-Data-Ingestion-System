@@ -1,0 +1,5 @@
+/* Custom styles for the admin dashboard */
+.nav-link.active {
+    background-color: hsl(var(--p));
+    color: hsl(var(--pc));
+}

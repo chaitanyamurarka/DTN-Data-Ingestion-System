@@ -30,6 +30,12 @@ async def search_symbols(
     manager: SymbolManager = Depends(get_symbol_manager)
 ):
     """Search symbols with filters"""
+    # Fix for empty query parameters being passed as ['']
+    if exchanges and exchanges == ['']:
+        exchanges = None
+    if security_types and security_types == ['']:
+        security_types = None
+
     filter = SymbolFilter(
         exchanges=exchanges,
         security_types=security_types,
