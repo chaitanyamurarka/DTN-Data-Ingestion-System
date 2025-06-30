@@ -107,11 +107,53 @@ class DynamicOHLCIngestor:
                          '1h', '1d']
         }
     
+    def ensure_symbol_registered(self, symbol_info):
+        """Ensure symbol is registered in symbol management system"""
+        symbol = symbol_info['symbol']
+        exchange = symbol_info['exchange']
+        
+        try:
+            # Check if symbol exists
+            flux_query = f'''
+            from(bucket: "{self.symbol_bucket}")
+              |> range(start: -30d)
+              |> filter(fn: (r) => r.symbol == "{symbol}")
+              |> filter(fn: (r) => r._field == "active")
+              |> last()
+            '''
+            
+            tables = self.query_api.query(query=flux_query)
+            if not tables or not tables[0].records:
+                # Symbol doesn't exist, register it
+                logging.info(f"Registering new symbol: {symbol}")
+                
+                measurement = f"symbol_{exchange}_STOCK"  # Default to STOCK type
+                
+                point = Point(measurement) \
+                    .tag("symbol", symbol) \
+                    .tag("exchange", exchange) \
+                    .tag("security_type", "STOCK") \
+                    .field("description", f"Auto-registered {symbol}") \
+                    .field("active", True) \
+                    .field("historical_days", 30) \
+                    .field("backfill_minutes", 120) \
+                    .field("added_by", "ohlc_ingest_auto") \
+                    .time(dt.now(timezone.utc), WritePrecision.NS)
+                
+                self.write_api.write(bucket=self.symbol_bucket, record=point)
+                logging.info(f"Successfully registered symbol {symbol}")
+                
+        except Exception as e:
+            logging.error(f"Error ensuring symbol {symbol} is registered: {e}")
+    
     def ingest_symbol(self, symbol_info, hist_conn):
         """Ingest historical data for a single symbol"""
         symbol = symbol_info['symbol']
         exchange = symbol_info['exchange']
         historical_days = symbol_info.get('historical_days', 30)
+        
+        # Ensure symbol is registered first
+        self.ensure_symbol_registered(symbol_info)
         
         config = self.get_schedule_config(symbol)
         intervals = config.get('intervals', ['1m', '5m', '15m', '30m', '1h', '1d'])
@@ -136,6 +178,8 @@ class DynamicOHLCIngestor:
             "1h":   {"interval": 3600, "type": "s", "days": historical_days},
             "1d":   {"interval": 1,    "type": "d", "days": historical_days}
         }
+        
+        ingestion_success = False
         
         # Only fetch configured intervals
         for tf_name in intervals:
@@ -179,9 +223,16 @@ class DynamicOHLCIngestor:
                                 data_frame_measurement_name=name,
                                 data_frame_tag_columns=['symbol', 'exchange']
                             )
+                        ingestion_success = True
                             
             except Exception as e:
                 logging.error(f"Error fetching {tf_name} for {symbol}: {e}", exc_info=True)
+        
+        # Update last ingestion timestamp if any data was successfully ingested
+        if ingestion_success:
+            self._update_last_ingestion(symbol)
+        
+        return ingestion_success
     
     def get_latest_timestamp(self, symbol: str, measurement_suffix: str) -> dt | None:
         # Similar to original implementation
@@ -262,10 +313,11 @@ class DynamicOHLCIngestor:
             
             for symbol_info in symbols:
                 try:
-                    self.ingest_symbol(symbol_info, hist_conn)
-                    
-                    # Update last ingestion timestamp
-                    self._update_last_ingestion(symbol_info['symbol'])
+                    success = self.ingest_symbol(symbol_info, hist_conn)
+                    if success:
+                        logging.info(f"Successfully ingested data for {symbol_info['symbol']}")
+                    else:
+                        logging.warning(f"No new data ingested for {symbol_info['symbol']}")
                     
                 except Exception as e:
                     logging.error(f"Error processing {symbol_info['symbol']}: {e}")
@@ -299,6 +351,7 @@ class DynamicOHLCIngestor:
                     .time(dt.now(timezone.utc), WritePrecision.NS)
                 
                 self.write_api.write(bucket=self.symbol_bucket, record=point)
+                logging.info(f"Updated last ingestion timestamp for {symbol}")
         except Exception as e:
             logging.error(f"Error updating last ingestion for {symbol}: {e}")
 
