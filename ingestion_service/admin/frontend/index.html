@@ -80,71 +80,26 @@
     </div>
     
     <!-- Modals -->
-    <dialog id="add-symbol-modal" class="modal">
-        <div class="modal-box">
+    <dialog id="add-symbol-modal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box w-11/12 max-w-5xl">
             <h3 class="font-bold text-lg">Add New Symbol</h3>
-            <form id="add-symbol-form" class="space-y-4 mt-4">
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Symbol</span>
-                    </label>
-                    <input type="text" name="symbol" class="input input-bordered" required />
+            <p class="py-4">Search for a symbol from the uploaded DTN file. If the file is not uploaded, please go to the "Import Symbols" page first.</p>
+
+            <div class="form-control">
+                <div class="input-group">
+                    <input type="text" id="symbol-lookup-input" placeholder="e.g., AAPL" class="input input-bordered w-full"/>
+                    <button id="symbol-lookup-btn" class="btn btn-square">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                    </button>
                 </div>
-                
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Exchange</span>
-                    </label>
-                    <select name="exchange" class="select select-bordered" required>
-                        <option value="NYSE">NYSE</option>
-                        <option value="NASDAQ">NASDAQ</option>
-                        <option value="CME">CME</option>
-                        <option value="EUREX">EUREX</option>
-                    </select>
+            </div>
+
+            <div id="symbol-lookup-results" class="mt-4 max-h-96 overflow-y-auto">
                 </div>
-                
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Security Type</span>
-                    </label>
-                    <select name="security_type" class="select select-bordered" required>
-                        <option value="STOCK">Stock</option>
-                        <option value="FUTURE">Future</option>
-                        <option value="OPTION">Option</option>
-                        <option value="INDEX">Index</option>
-                        <option value="FOREX">Forex</option>
-                        <option value="CRYPTO">Crypto</option>
-                    </select>
-                </div>
-                
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Description</span>
-                    </label>
-                    <input type="text" name="description" class="input input-bordered" />
-                </div>
-                
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Historical Data (days)</span>
-                    </label>
-                    <input type="number" name="historical_days" class="input input-bordered" 
-                           min="1" max="365" value="30" required />
-                </div>
-                
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Live Backfill (minutes)</span>
-                    </label>
-                    <input type="number" name="backfill_minutes" class="input input-bordered" 
-                           min="0" max="1440" value="120" required />
-                </div>
-                
-                <div class="modal-action">
-                    <button type="submit" class="btn btn-primary">Add Symbol</button>
-                    <button type="button" class="btn" onclick="add_symbol_modal.close()">Cancel</button>
-                </div>
-            </form>
+
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('add-symbol-modal').close()">Close</button>
+            </div>
         </div>
         <form method="dialog" class="modal-backdrop">
             <button>close</button>

@@ -81,32 +81,34 @@ async def delete_symbol(
         raise HTTPException(status_code=404, detail="Symbol not found")
     return {"status": "success", "message": f"Symbol {symbol_id} deactivated"}
 
-@router.post("/import/dtn")
-async def import_dtn_symbols(
-    file: UploadFile = File(...), # This is the key change to accept a file
+@router.get("/lookup/{symbol_query}")
+async def lookup_dtn_symbol(
+    symbol_query: str,
     manager: SymbolManager = Depends(get_symbol_manager)
 ):
-    """Import symbols from an uploaded DTN zip file"""
+    """Looks up a symbol from the uploaded DTN zip file."""
     from services.symbol_importer import SymbolImporter
+    # We pass the symbol manager to the importer, although it's not used in the search function
     importer = SymbolImporter(manager)
+    try:
+        results = importer.search_in_dtn_zip(symbol_query)
+        return results
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred during lookup: {str(e)}")
 
-    # Create a temporary directory to store the uploaded file
-    temp_dir = "temp_uploads"
-    os.makedirs(temp_dir, exist_ok=True)
-    file_path = os.path.join(temp_dir, file.filename)
+# Also, modify the existing import endpoint to just save the file
+@router.post("/import/dtn")
+async def upload_dtn_symbols_file(file: UploadFile = File(...)):
+    """Saves the uploaded DTN zip file to a known location for later lookups."""
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, "by_exchange.zip")
 
     try:
-        # Save the uploaded file content to a temporary file on the server
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
-        # Now, pass the path of the *actual server-side file* to the importer
-        results = importer.import_from_dtn_zip(file_path)
-        return {"status": "success", "imported": results}
+        return {"status": "success", "message": "DTN symbols file uploaded successfully. You can now use the lookup feature."}
     except Exception as e:
-        # Provide a more specific error message
-        raise HTTPException(status_code=400, detail=f"Error processing file: {e}")
-    finally:
-        # Always clean up the temporary file
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        raise HTTPException(status_code=500, detail=f"Error uploading file: {e}")

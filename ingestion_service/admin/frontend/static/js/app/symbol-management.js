@@ -53,6 +53,18 @@ export class SymbolManager {
                 }
             }
         });
+
+        document.body.addEventListener('click', async (e) => {
+        if (e.target.closest('#symbol-lookup-btn')) {
+            const input = document.getElementById('symbol-lookup-input');
+            const query = input.value.trim();
+            if (query) {
+                await this.lookupSymbol(query);
+            } else {
+                showToast('Please enter a symbol to search.', 'warning');
+            }
+        }
+    });
     }
 
     updateFilters() {
@@ -175,6 +187,91 @@ export class SymbolManager {
                 ${buttons}
             </div>
         `;
+    }
+
+    async lookupSymbol(query) {
+    const resultsContainer = document.getElementById('symbol-lookup-results');
+    resultsContainer.innerHTML = '<div class="text-center"><span class="loading loading-spinner"></span></div>';
+
+    try {
+        const results = await apiClient.get(`/symbols/lookup/${query}`);
+        if (results && results.length > 0) {
+            this.renderLookupResults(results);
+        } else {
+            resultsContainer.innerHTML = '<p class="text-center">No symbols found for that query.</p>';
+        }
+    } catch (error) {
+        resultsContainer.innerHTML = `<div class="alert alert-error"><span>${error.message}</span></div>`;
+        console.error('Lookup error:', error);
+    }
+    }
+
+    renderLookupResults(results) {
+        const resultsContainer = document.getElementById('symbol-lookup-results');
+        const tableRows = results.map(res => `
+            <tr>
+                <td><strong class="font-mono">${res.symbol}</strong></td>
+                <td><span class="badge badge-ghost">${res.exchange}</span></td>
+                <td><span class="badge badge-outline">${res.security_type}</span></td>
+                <td class="text-xs truncate max-w-xs">${res.description || 'N/A'}</td>
+                <td>
+                    <button class="btn btn-xs btn-primary select-symbol-btn"
+                            data-symbol='${JSON.stringify(res)}'>
+                        Select
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+
+        resultsContainer.innerHTML = `
+            <div class="overflow-x-auto">
+                <table class="table table-compact w-full">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Exchange</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows}
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        // Add event listeners for the new "Select" buttons
+        document.querySelectorAll('.select-symbol-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const symbolData = JSON.parse(e.currentTarget.dataset.symbol);
+                this.addSelectedSymbol(symbolData);
+            });
+        });
+    }
+
+    async addSelectedSymbol(symbolData) {
+        // This is similar to your old `addSymbol` method, but uses the data from the lookup
+        const dataToAdd = {
+            symbol: symbolData.symbol,
+            exchange: symbolData.exchange,
+            security_type: symbolData.security_type,
+            description: symbolData.description,
+            historical_days: 30, // Or prompt the user for these
+            backfill_minutes: 120, // Or prompt the user
+            added_by: 'admin_lookup',
+        };
+
+        try {
+            await apiClient.post('/symbols/', dataToAdd);
+            showToast(`Symbol ${symbolData.symbol} added successfully!`, 'success');
+            document.getElementById('add-symbol-modal').close();
+            await this.loadSymbols(); // Refresh the main table
+        } catch (error) {
+            showToast(error.message || `Failed to add ${symbolData.symbol}`, 'error');
+            console.error('Error adding selected symbol:', error);
+        }
     }
 
     async addSymbol(formData) {
