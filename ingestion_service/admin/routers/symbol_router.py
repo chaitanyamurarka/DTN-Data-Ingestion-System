@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, File, UploadFile
 from typing import List, Optional
 from services.symbol_manager import SymbolManager
 from models.schemas import Symbol, SymbolCreate, SymbolUpdate, SymbolFilter
+import shutil
+import os
 
 router = APIRouter()
 
@@ -81,15 +83,30 @@ async def delete_symbol(
 
 @router.post("/import/dtn")
 async def import_dtn_symbols(
-    file_path: str,
+    file: UploadFile = File(...), # This is the key change to accept a file
     manager: SymbolManager = Depends(get_symbol_manager)
 ):
-    """Import symbols from DTN zip file"""
-    from ..services.symbol_importer import SymbolImporter
+    """Import symbols from an uploaded DTN zip file"""
+    from services.symbol_importer import SymbolImporter
     importer = SymbolImporter(manager)
-    
+
+    # Create a temporary directory to store the uploaded file
+    temp_dir = "temp_uploads"
+    os.makedirs(temp_dir, exist_ok=True)
+    file_path = os.path.join(temp_dir, file.filename)
+
     try:
+        # Save the uploaded file content to a temporary file on the server
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Now, pass the path of the *actual server-side file* to the importer
         results = importer.import_from_dtn_zip(file_path)
         return {"status": "success", "imported": results}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Provide a more specific error message
+        raise HTTPException(status_code=400, detail=f"Error processing file: {e}")
+    finally:
+        # Always clean up the temporary file
+        if os.path.exists(file_path):
+            os.remove(file_path)

@@ -6,22 +6,25 @@ class ApiClient {
     }
 
     async _fetch(url, options = {}) {
+        // Do not set Content-Type for FormData; the browser does it automatically
+        const isFormData = options.body instanceof FormData;
+        const headers = isFormData ? {} : { 'Content-Type': 'application/json' };
+
         try {
             const response = await fetch(`${this.baseURL}${url}`, {
                 ...options,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...options.headers,
-                },
+                headers: { ...headers, ...options.headers },
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                // Try to parse error JSON, but fall back to a generic message
+                const errorData = await response.json().catch(() => ({
+                    detail: `Request failed with status: ${response.status}`
+                }));
+                throw new Error(errorData.detail);
             }
 
-            // Handle cases with no content
-            if (response.status === 204) {
+            if (response.status === 204) { // No Content
                 return null;
             }
 
@@ -39,9 +42,10 @@ class ApiClient {
     }
 
     post(url, data) {
+        const isFormData = data instanceof FormData;
         return this._fetch(url, {
             method: 'POST',
-            body: JSON.stringify(data),
+            body: isFormData ? data : JSON.stringify(data),
         });
     }
 

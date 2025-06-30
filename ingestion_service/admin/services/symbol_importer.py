@@ -3,7 +3,7 @@ import zipfile
 import pandas as pd
 import logging
 from typing import List, Set,Dict
-from ..models.schemas import SymbolCreate
+from models.schemas import SymbolCreate
 
 logger = logging.getLogger(__name__)
 

@@ -61,42 +61,43 @@ class AdminDashboard {
     async loadPage(page) {
         const content = document.getElementById('main-content');
         content.innerHTML = '<div class="flex justify-center p-8"><span class="loading loading-spinner loading-lg"></span></div>';
-        
+
         this.currentPage = page;
-        
+
         try {
             switch (page) {
                 case 'symbols':
                     content.innerHTML = this.getSymbolsPageHTML();
                     await this.managers.symbols.init();
                     break;
-                    
+
                 case 'import':
                     content.innerHTML = this.getImportPageHTML();
-                    await this.managers.importer.init();
+                    // Use the global symbolImporter instance to initialize
+                    await window.symbolImporter.init();
                     break;
-                    
+
                 case 'schedules':
                     content.innerHTML = this.getSchedulesPageHTML();
                     await this.managers.schedules.init();
                     break;
-                    
+
                 case 'availability':
                     content.innerHTML = this.getAvailabilityPageHTML();
                     await this.managers.monitor.initAvailability();
                     break;
-                    
+
                 case 'statistics':
                     content.innerHTML = this.getStatisticsPageHTML();
                     await this.managers.monitor.initStatistics();
                     break;
-                    
+
                 default:
                     content.innerHTML = '<div class="alert alert-error">Page not found</div>';
             }
         } catch (error) {
             console.error('Error loading page:', error);
-            content.innerHTML = '<div class="alert alert-error">Failed to load page</div>';
+            content.innerHTML = `<div class="alert alert-error">Failed to load page: ${error.message}</div>`;
         }
     }
     
@@ -105,7 +106,7 @@ class AdminDashboard {
             <div class="space-y-4">
                 <div class="flex justify-between items-center">
                     <h1 class="text-3xl font-bold">Symbol Management</h1>
-                    <button class="btn btn-primary" onclick="add_symbol_modal.showModal()">
+                    <button class="btn btn-primary" onclick="document.getElementById('add-symbol-modal').showModal()">
                         <i class="fas fa-plus"></i> Add Symbol
                     </button>
                 </div>
@@ -157,8 +158,7 @@ class AdminDashboard {
                         </div>
                         
                         <div id="symbols-table-container">
-                            <!-- Table will be rendered here -->
-                        </div>
+                            </div>
                     </div>
                 </div>
             </div>
