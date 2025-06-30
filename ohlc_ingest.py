@@ -44,31 +44,33 @@ class DynamicOHLCIngestor:
         self.symbol_bucket = "symbol_management"
         
     def get_active_symbols(self):
-        """Fetch active symbols from InfluxDB"""
+        """Fetch unique active symbols from InfluxDB"""
         flux_query = f'''
         from(bucket: "{self.symbol_bucket}")
-          |> range(start: -30d)
-          |> filter(fn: (r) => r._measurement =~ /^symbol_/)
-          |> filter(fn: (r) => r._field == "active")
-          |> filter(fn: (r) => r._value == true)
-          |> last()
+        |> range(start: -30d)
+        |> filter(fn: (r) => r._measurement =~ /^symbol_/)
+        |> filter(fn: (r) => r._field == "active")
+        |> filter(fn: (r) => r._value == true)
+        |> last()
         '''
         
-        symbols = []
+        symbols_map = {}
         try:
             tables = self.query_api.query(query=flux_query)
             for table in tables:
                 for record in table.records:
-                    symbol_info = {
-                        'symbol': record['symbol'],
-                        'exchange': record['exchange'],
-                        'historical_days': self._get_symbol_field(record['symbol'], 'historical_days')
-                    }
-                    symbols.append(symbol_info)
+                    symbol = record['symbol']
+                    # Only add the symbol if it hasn't been added yet
+                    if symbol not in symbols_map:
+                        symbols_map[symbol] = {
+                            'symbol': symbol,
+                            'exchange': record['exchange'],
+                            'historical_days': self._get_symbol_field(symbol, 'historical_days')
+                        }
         except Exception as e:
             logging.error(f"Error fetching active symbols: {e}")
         
-        return symbols
+        return list(symbols_map.values())
     
     def _get_symbol_field(self, symbol, field):
         """Get specific field value for a symbol"""
