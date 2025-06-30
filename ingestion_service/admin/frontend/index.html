@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ingestion Admin Dashboard</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@3.5.0/dist/full.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body class="bg-base-200">
+    <div class="drawer lg:drawer-open">
+        <input id="drawer-toggle" type="checkbox" class="drawer-toggle" />
+        
+        <div class="drawer-content flex flex-col">
+            <!-- Navbar -->
+            <div class="navbar bg-base-100 shadow-lg">
+                <div class="flex-none lg:hidden">
+                    <label for="drawer-toggle" class="btn btn-square btn-ghost">
+                        <i class="fas fa-bars text-xl"></i>
+                    </label>
+                </div>
+                <div class="flex-1">
+                    <h1 class="text-xl font-bold">Ingestion Admin Dashboard</h1>
+                </div>
+                <div class="flex-none">
+                    <button class="btn btn-ghost btn-circle">
+                        <i class="fas fa-bell"></i>
+                    </button>
+                    <label class="swap swap-rotate ml-2">
+                        <input type="checkbox" id="theme-toggle" />
+                        <i class="swap-on fas fa-moon"></i>
+                        <i class="swap-off fas fa-sun"></i>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Main Content -->
+            <main class="flex-1 p-4">
+                <div id="main-content" class="container mx-auto">
+                    <!-- Content will be dynamically loaded here -->
+                </div>
+            </main>
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="drawer-side">
+            <label for="drawer-toggle" class="drawer-overlay"></label>
+            <aside class="w-64 min-h-full bg-base-100">
+                <div class="p-4">
+                    <h2 class="text-2xl font-bold text-primary mb-8">Admin Panel</h2>
+                    
+                    <ul class="menu">
+                        <li class="menu-title">Symbol Management</li>
+                        <li><a href="#symbols" class="nav-link active" data-page="symbols">
+                            <i class="fas fa-chart-line"></i> Symbols
+                        </a></li>
+                        <li><a href="#import" class="nav-link" data-page="import">
+                            <i class="fas fa-file-import"></i> Import Symbols
+                        </a></li>
+                        
+                        <li class="menu-title">Scheduling</li>
+                        <li><a href="#schedules" class="nav-link" data-page="schedules">
+                            <i class="fas fa-clock"></i> Schedules
+                        </a></li>
+                        
+                        <li class="menu-title">Monitoring</li>
+                        <li><a href="#availability" class="nav-link" data-page="availability">
+                            <i class="fas fa-database"></i> Data Availability
+                        </a></li>
+                        <li><a href="#statistics" class="nav-link" data-page="statistics">
+                            <i class="fas fa-chart-bar"></i> Statistics
+                        </a></li>
+                    </ul>
+                </div>
+            </aside>
+        </div>
+    </div>
+    
+    <!-- Modals -->
+    <dialog id="add-symbol-modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Add New Symbol</h3>
+            <form id="add-symbol-form" class="space-y-4 mt-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Symbol</span>
+                    </label>
+                    <input type="text" name="symbol" class="input input-bordered" required />
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Exchange</span>
+                    </label>
+                    <select name="exchange" class="select select-bordered" required>
+                        <option value="NYSE">NYSE</option>
+                        <option value="NASDAQ">NASDAQ</option>
+                        <option value="CME">CME</option>
+                        <option value="EUREX">EUREX</option>
+                    </select>
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Security Type</span>
+                    </label>
+                    <select name="security_type" class="select select-bordered" required>
+                        <option value="STOCK">Stock</option>
+                        <option value="FUTURE">Future</option>
+                        <option value="OPTION">Option</option>
+                        <option value="INDEX">Index</option>
+                        <option value="FOREX">Forex</option>
+                        <option value="CRYPTO">Crypto</option>
+                    </select>
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Description</span>
+                    </label>
+                    <input type="text" name="description" class="input input-bordered" />
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Historical Data (days)</span>
+                    </label>
+                    <input type="number" name="historical_days" class="input input-bordered" 
+                           min="1" max="365" value="30" required />
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">Live Backfill (minutes)</span>
+                    </label>
+                    <input type="number" name="backfill_minutes" class="input input-bordered" 
+                           min="0" max="1440" value="120" required />
+                </div>
+                
+                <div class="modal-action">
+                    <button type="submit" class="btn btn-primary">Add Symbol</button>
+                    <button type="button" class="btn" onclick="add_symbol_modal.close()">Cancel</button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+    
+    <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+    
+    <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
