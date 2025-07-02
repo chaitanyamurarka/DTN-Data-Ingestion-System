@@ -6,6 +6,7 @@ import numpy as np
 import pyiqfeed as iq
 import redis
 from zoneinfo import ZoneInfo
+import threading # Import threading
 
 # Local imports
 from dtn_iq_client import get_iqfeed_quote_conn, get_iqfeed_history_conn, launch_iqfeed_service_if_needed
@@ -118,11 +119,65 @@ class LiveTickListener(iq.SilentQuoteListener):
         except Exception as e:
             logging.error(f"Error processing TRADE data: {e}. Data: {update_data}", exc_info=True)
 
+def update_watched_symbols(r_client, quote_conn, hist_conn, listener, watched_symbols_set):
+    """
+    Fetches the latest symbols from Redis and updates the watched symbols.
+    """
+    logging.info("Checking for symbol updates from Redis...")
+    try:
+        symbols_data_json = r_client.get("dtn:ingestion:symbols")
+        if not symbols_data_json:
+            logging.warning("No symbols found in Redis key 'dtn:ingestion:symbols'. Unwatching all current symbols.")
+            symbols_from_redis = set()
+        else:
+            symbols_data = json.loads(symbols_data_json)
+            symbols_from_redis = {item["symbol"] for item in symbols_data if "symbol" in item}
+
+        symbols_to_add = symbols_from_redis - watched_symbols_set
+        symbols_to_remove = watched_symbols_set - symbols_from_redis
+
+        for symbol in symbols_to_add:
+            listener.backfill_intraday_data(symbol, hist_conn)
+            quote_conn.trades_watch(symbol)
+            logging.info(f"Dynamically added and watching {symbol} for live tick updates.")
+            watched_symbols_set.add(symbol)
+        
+        for symbol in symbols_to_remove:
+            quote_conn.unwatch(symbol)
+            logging.info(f"Dynamically unwatched {symbol}.")
+            watched_symbols_set.remove(symbol)
+
+    except json.JSONDecodeError as e:
+        logging.error(f"Error decoding symbols from Redis: {e}")
+    except Exception as e:
+        logging.error(f"Error updating watched symbols: {e}", exc_info=True)
+
+def redis_pubsub_listener(r_client, quote_conn, hist_conn, listener, watched_symbols_set):
+    """
+    Listens for messages on the Redis Pub/Sub channel and triggers symbol updates.
+    """
+    pubsub = r_client.pubsub()
+    pubsub.subscribe("dtn:ingestion:symbol_updates")
+    logging.info("Subscribed to Redis channel 'dtn:ingestion:symbol_updates'.")
+
+    for message in pubsub.listen():
+        if message['type'] == 'message':
+            logging.info(f"Received Redis Pub/Sub message: {message['data']}")
+            update_watched_symbols(r_client, quote_conn, hist_conn, listener, watched_symbols_set)
+
 def main():
-    """Main function to start listening to live data."""
+    """
+    Main function to start listening to live data.
+    """
     launch_iqfeed_service_if_needed()
-    symbols = ["AAPL", "AMZN", "TSLA", "@NQ#"]
     
+    try:
+        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        r.ping()
+    except redis.exceptions.ConnectionError as e:
+        logging.error(f"Could not connect to Redis: {e}. Exiting.")
+        return
+
     quote_conn = get_iqfeed_quote_conn()
     hist_conn = get_iqfeed_history_conn()
 
@@ -133,19 +188,28 @@ def main():
     listener = LiveTickListener()
     quote_conn.add_listener(listener)
     
+    watched_symbols = set() # Keep track of symbols currently being watched
+
     with iq.ConnConnector([quote_conn, hist_conn]):
-        for symbol in symbols:
-            listener.backfill_intraday_data(symbol, hist_conn)
-            quote_conn.trades_watch(symbol)
-            logging.info(f"Watching {symbol} for live tick updates.")
-        
+        # Initial load of symbols
+        update_watched_symbols(r, quote_conn, hist_conn, listener, watched_symbols)
+
+        # Start Redis Pub/Sub listener in a separate thread
+        pubsub_thread = threading.Thread(
+            target=redis_pubsub_listener,
+            args=(r, quote_conn, hist_conn, listener, watched_symbols),
+            daemon=True # Daemon thread exits when the main program exits
+        )
+        pubsub_thread.start()
+
         try:
             logging.info("Ingestion service is running. Press Ctrl+C to stop.")
+            # Keep the main thread alive
             while True:
-                time.sleep(1)
+                time.sleep(1) 
         except KeyboardInterrupt:
             logging.info("Stopping live data ingestion.")
-            for symbol in symbols:
+            for symbol in watched_symbols:
                 quote_conn.unwatch(symbol)
 
 if __name__ == "__main__":

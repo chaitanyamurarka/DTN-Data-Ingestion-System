@@ -5,6 +5,7 @@ import pandas as pd
 from io import StringIO
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -21,6 +22,52 @@ except redis.exceptions.ConnectionError as e:
 
 # Initialize ProcessPoolExecutor for CPU-bound tasks
 executor = ProcessPoolExecutor()
+
+class SymbolUpdate(BaseModel):
+    symbol: str
+    exchange: str
+
+@app.post("/set_ingestion_symbols/")
+async def set_ingestion_symbols(symbols: list[SymbolUpdate]):
+    """
+    Sets the complete list of symbols to be ingested by the OHLC and Live Tick services.
+    The symbols are stored in Redis under the key 'dtn:ingestion:symbols'.
+    This overwrites any existing list.
+    """
+    try:
+        # Convert the list of Pydantic models to a list of dictionaries
+        symbols_data = [s.dict() for s in symbols]
+        r.set("dtn:ingestion:symbols", json.dumps(symbols_data))
+        r.publish("dtn:ingestion:symbol_updates", "symbols_updated") # Publish update message
+        return {"message": "Ingestion symbols set successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set ingestion symbols: {e}")
+
+@app.post("/add_ingestion_symbol/")
+async def add_ingestion_symbol(symbol_data: SymbolUpdate):
+    """
+    Adds a single symbol to the list of symbols to be ingested.
+    If the symbol (with its exchange) already exists, it will not be added again.
+    """
+    try:
+        current_symbols_json = r.get("dtn:ingestion:symbols")
+        if current_symbols_json:
+            current_symbols = json.loads(current_symbols_json)
+        else:
+            current_symbols = []
+
+        new_symbol_dict = symbol_data.dict()
+        
+        # Check for duplicates based on symbol and exchange
+        if not any(s['symbol'] == new_symbol_dict['symbol'] and s['exchange'] == new_symbol_dict['exchange'] for s in current_symbols):
+            current_symbols.append(new_symbol_dict)
+            r.set("dtn:ingestion:symbols", json.dumps(current_symbols))
+            r.publish("dtn:ingestion:symbol_updates", "symbols_updated") # Publish update message
+            return {"message": f"Symbol {symbol_data.symbol} added successfully."}
+        else:
+            return {"message": f"Symbol {symbol_data.symbol} (Exchange: {symbol_data.exchange}) already exists in the ingestion list.", "status": "skipped"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add ingestion symbol: {e}")
 
 def search_dataframe(df_json, search_string):
     df = pd.read_json(StringIO(df_json))
@@ -96,3 +143,4 @@ async def search_symbols(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
