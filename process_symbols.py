@@ -5,6 +5,7 @@ import redis
 import glob
 import requests # Import the requests library
 import shutil
+from logging_config import logger
 
 # Configuration
 ZIP_FILE_URL = "https://github.com/chaitanyamurarka/DTN-IQFeed-Symbol-Downloader/raw/refs/heads/main/dtn_symbols/by_exchange.zip"
@@ -16,34 +17,34 @@ TARGET_EXCHANGES = ["NYSE", "CME", "NASDAQ", "EUREX"]
 try:
     r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True) # decode_responses is good practice
     r.ping()
-    print("Successfully connected to Redis!")
+    logger.info("Successfully connected to Redis!")
 except redis.exceptions.ConnectionError as e:
-    print(f"Could not connect to Redis: {e}")
-    print("Please ensure Redis server is running and accessible.")
+    logger.error(f"Could not connect to Redis: {e}")
+    logger.error("Please ensure Redis server is running and accessible.")
     exit()
 
 def download_file(url, destination):
     """Downloads a file from a URL to a local destination."""
-    print(f"Downloading file from {url} to {destination}...")
+    logger.info(f"Downloading file from {url} to {destination}...")
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
         with open(destination, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        print("Download complete.")
+        logger.info("Download complete.")
         return True
     except requests.exceptions.RequestException as e:
-        print(f"Error downloading file: {e}")
+        logger.error(f"Error downloading file: {e}")
         return False
 
 def extract_zip(zip_path, extract_to):
     """Extracts a zip file to a specified directory."""
     if not os.path.exists(zip_path):
-        print(f"Error: Local zip file not found at {zip_path}")
+        logger.error(f"Error: Local zip file not found at {zip_path}")
         return False
     
-    print(f"Extracting {zip_path} to {extract_to}...")
+    logger.info(f"Extracting {zip_path} to {extract_to}...")
     # Ensure the extraction directory exists and is empty
     if os.path.exists(extract_to):
         shutil.rmtree(extract_to)
@@ -51,7 +52,7 @@ def extract_zip(zip_path, extract_to):
 
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_to)
-    print("Extraction complete.")
+    logger.info("Extraction complete.")
     return True
 
 def process_and_store_symbols(extracted_dir, redis_client, target_exchanges):
@@ -63,19 +64,19 @@ def process_and_store_symbols(extracted_dir, redis_client, target_exchanges):
     # The extracted structure is nested, e.g., .../dtn_symbols_extracted/dtn_symbols/by_exchange/
     base_path = os.path.join(extracted_dir, "dtn_symbols", "by_exchange")
 
-    print(f"Searching for exchanges in: {base_path}")
+    logger.info(f"Searching for exchanges in: {base_path}")
 
     for exchange_name in target_exchanges:
         exchange_path = os.path.join(base_path, exchange_name)
         if not os.path.isdir(exchange_path):
-            print(f"Warning: Exchange directory not found for {exchange_name}")
+            logger.warning(f"Warning: Exchange directory not found for {exchange_name}")
             continue
 
-        print(f"Processing symbols for exchange: {exchange_name}")
+        logger.info(f"Processing symbols for exchange: {exchange_name}")
         csv_files = glob.glob(os.path.join(exchange_path, "*.csv"))
 
         if not csv_files:
-            print(f"No CSV files found for exchange {exchange_name}")
+            logger.warning(f"No CSV files found for exchange {exchange_name}")
             continue
 
         for csv_file in csv_files:
@@ -84,7 +85,7 @@ def process_and_store_symbols(extracted_dir, redis_client, target_exchanges):
 
                 # Check for the actual column names from your sample
                 if 'symbol' not in df.columns or 'exchange' not in df.columns or 'securityType' not in df.columns:
-                    print(f"Skipping {csv_file}: Missing one of the required columns ('symbol', 'exchange', 'securityType').")
+                    logger.warning(f"Skipping {csv_file}: Missing one of the required columns ('symbol', 'exchange', 'securityType').")
                     continue
 
                 # Filter the DataFrame to ensure we only process symbols for the target exchange
@@ -102,9 +103,9 @@ def process_and_store_symbols(extracted_dir, redis_client, target_exchanges):
                     processed_count += len(group_df)
 
             except Exception as e:
-                print(f"Error processing {csv_file}: {e}")
+                logger.error(f"Error processing {csv_file}: {e}")
 
-    print(f"\nFinished processing. Total symbols stored in Redis: {processed_count}")
+    logger.info(f"Finished processing. Total symbols stored in Redis: {processed_count}")
 
 def main():
     # 1. Download the file from the URL

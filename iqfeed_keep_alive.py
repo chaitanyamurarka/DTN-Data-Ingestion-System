@@ -26,7 +26,7 @@ import os
 import time
 import argparse
 import socket
-import logging
+from logging_config import logger
 from typing import Optional
 from config import settings
 
@@ -42,7 +42,7 @@ except ImportError:
 
 
 # --- Basic Logging Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 # --- Load Credentials from Environment Variables ---
 # This script requires the same DTN credentials as the main application.
@@ -59,12 +59,12 @@ def main():
     args = parser.parse_args()
 
     if not all([dtn_product_id, dtn_login, dtn_password]):
-        logging.error("DTN credentials (DTN_PRODUCT_ID, DTN_LOGIN, DTN_PASSWORD) must be set as environment variables.")
+        logger.error("DTN credentials (DTN_PRODUCT_ID, DTN_LOGIN, DTN_PASSWORD) must be set as environment variables.")
         exit(1)
 
     # Initialize the FeedService object, which is used to launch IQConnect.exe
     try:
-        logging.info("Initializing IQFeed Service object...")
+        logger.info("Initializing IQFeed Service object...")
         feed_service = iq.FeedService(
             product=dtn_product_id,
             version="IQFEED_KEEPALIVE_V1",
@@ -72,7 +72,7 @@ def main():
             password=dtn_password
         )
     except Exception as e:
-        logging.error(f"Failed to initialize IQFeed Service object: {e}", exc_info=True)
+        logger.error(f"Failed to initialize IQFeed Service object: {e}", exc_info=True)
         exit(1)
 
     # --- Main Loop ---
@@ -82,44 +82,44 @@ def main():
         try:
             # Step 1: Ensure IQConnect.exe is running before attempting to connect.
             # The `launch` method is idempotent; it won't start a new process if one is running.
-            logging.info(f"Ensuring IQFeed is running (headless={args.headless}, nohup={args.nohup})...")
+            logger.info(f"Ensuring IQFeed is running (headless={args.headless}, nohup={args.nohup})...")
             feed_service.launch(
                 timeout=60,  # Generous timeout for initial launch
                 check_conn=True,
                 headless=args.headless,
                 nohup=args.nohup
             )
-            logging.info("IQFeed launch/check command issued. IQConnect should be running.")
+            logger.info("IQFeed launch/check command issued. IQConnect should be running.")
 
             # Step 2: Establish an Admin connection to monitor the feed's health.
-            logging.info("Attempting to establish Admin connection to IQFeed...")
+            logger.info("Attempting to establish Admin connection to IQFeed...")
             admin_conn = iq.AdminConn(name="KeepAliveAdmin")
             # The ConnConnector context manager ensures connect() and disconnect() are called properly.
             with iq.ConnConnector([admin_conn]):
-                logging.info("Admin connection established. Monitoring for control file and connection health.")
+                logger.info("Admin connection established. Monitoring for control file and connection health.")
                 # Turn on client stats to get periodic health updates.
                 admin_conn.client_stats_on()
 
                 # Inner loop: keep checking for the control file while connected.
                 while not os.path.isfile(args.control_file):
                     if not admin_conn.reader_running():
-                        logging.warning("AdminConn reader thread is not running. Connection might be lost.")
+                        logger.warning("AdminConn reader thread is not running. Connection might be lost.")
                         raise ConnectionResetError("AdminConn reader thread terminated unexpectedly.")
                     time.sleep(10)  # Check for the control file every 10 seconds.
             
             # If the control file was found, break the outer loop to exit.
             if os.path.isfile(args.control_file):
-                logging.info(f"Control file '{args.control_file}' found. Initiating shutdown.")
+                logger.info(f"Control file '{args.control_file}' found. Initiating shutdown.")
                 break
 
         # --- Exception Handling and Retry Logic ---
         except (ConnectionRefusedError, ConnectionResetError, socket.timeout, socket.error) as e:
-            logging.warning(f"A connection error occurred: {e}. IQFeed may have disconnected. Retrying in 15s.")
+            logger.warning(f"A connection error occurred: {e}. IQFeed may have disconnected. Retrying in 15s.")
         except RuntimeError as e:
-            logging.error(f"A runtime error occurred, possibly from pyiqfeed: {e}. Retrying in 15s.")
+            logger.error(f"A runtime error occurred, possibly from pyiqfeed: {e}. Retrying in 15s.")
         except Exception as e:
-            logging.error(f"An unexpected error occurred in the main loop: {e}", exc_info=True)
-            logging.info("Attempting to recover. Retrying in 15s.")
+            logger.error(f"An unexpected error occurred in the main loop: {e}", exc_info=True)
+            logger.info("Attempting to recover. Retrying in 15s.")
         
         # If the control file is found at any point, break out of the main loop.
         if os.path.isfile(args.control_file):
@@ -127,10 +127,10 @@ def main():
 
         # Wait for 15 seconds before the next connection attempt, but check for the
         # control file every second during the wait to allow for a fast exit.
-        logging.info("Waiting 15 seconds before next connection attempt...")
+        logger.info("Waiting 15 seconds before next connection attempt...")
         for _ in range(15):
             if os.path.isfile(args.control_file):
-                logging.info(f"Control file detected during wait. Exiting retry loop.")
+                logger.info(f"Control file detected during wait. Exiting retry loop.")
                 break
             time.sleep(1)
         if os.path.isfile(args.control_file):
@@ -140,12 +140,12 @@ def main():
     # Remove the control file on exit so the script can be restarted easily.
     if os.path.exists(args.control_file):
         try:
-            logging.info(f"Removing control file: {args.control_file}")
+            logger.info(f"Removing control file: {args.control_file}")
             os.remove(args.control_file)
         except OSError as e:
-            logging.error(f"Error removing control file '{args.control_file}': {e}")
+            logger.error(f"Error removing control file '{args.control_file}': {e}")
     
-    logging.info("IQFeed Keep Alive script finished.")
+    logger.info("IQFeed Keep Alive script finished.")
 
 
 if __name__ == "__main__":

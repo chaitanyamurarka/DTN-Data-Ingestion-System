@@ -1,5 +1,5 @@
 import os
-import logging
+from logging_config import logger
 import time
 from datetime import datetime as dt, timezone, time as dt_time, timedelta
 import pytz
@@ -9,11 +9,7 @@ from typing import Optional, Dict, List
 import redis
 import json
 
-# For timezone-aware datetime objects
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -33,7 +29,7 @@ from config import settings
 
 # --- Configuration ---
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger.info("OHLC Ingestion System started.")
 
 # InfluxDB Configuration
 INFLUX_URL = settings.INFLUX_URL
@@ -96,10 +92,10 @@ class InfluxConnectionManager:
             self.query_api = self.client.query_api()
             self._is_healthy = self.check_health()
             
-            logging.info("InfluxDB connection initialized successfully")
+            logger.info("InfluxDB connection initialized successfully")
             
         except Exception as e:
-            logging.error(f"Failed to initialize InfluxDB connection: {e}")
+            logger.error(f"Failed to initialize InfluxDB connection: {e}")
             self._is_healthy = False
     
     def check_health(self) -> bool:
@@ -118,7 +114,7 @@ class InfluxConnectionManager:
             self._last_health_check = current_time
             return True
         except Exception as e:
-            logging.error(f"InfluxDB health check failed: {e}")
+            logger.error(f"InfluxDB health check failed: {e}")
             self._is_healthy = False
             self._last_health_check = current_time
             return False
@@ -126,7 +122,7 @@ class InfluxConnectionManager:
     def ensure_connection(self) -> bool:
         """Ensure we have a healthy connection, reconnecting if necessary."""
         if not self.check_health():
-            logging.warning("InfluxDB connection unhealthy, attempting to reconnect...")
+            logger.warning("InfluxDB connection unhealthy, attempting to reconnect...")
             self.initialize_connection()
             return self._is_healthy
         return True
@@ -152,13 +148,13 @@ class InfluxConnectionManager:
                 return
                 
             except (NewConnectionError, ConnectionError, InfluxDBError) as e:
-                logging.warning(f"Write attempt {attempt + 1} failed: {e}")
+                logger.warning(f"Write attempt {attempt + 1} failed: {e}")
                 
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
                     self.initialize_connection()  # Try to reconnect
                 else:
-                    logging.error(f"Failed to write after {MAX_RETRIES} attempts")
+                    logger.error(f"Failed to write after {MAX_RETRIES} attempts")
                     raise
     
     def query_with_retry(self, query: str):
@@ -171,20 +167,20 @@ class InfluxConnectionManager:
                 return self.query_api.query(query=query)
                 
             except Exception as e:
-                logging.warning(f"Query attempt {attempt + 1} failed: {e}")
+                logger.warning(f"Query attempt {attempt + 1} failed: {e}")
                 
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY * (2 ** attempt))
                     self.initialize_connection()
                 else:
-                    logging.error(f"Query failed after {MAX_RETRIES} attempts")
+                    logger.error(f"Query failed after {MAX_RETRIES} attempts")
                     raise
     
     def close(self):
         """Close the InfluxDB connection."""
         if self.client:
             self.client.close()
-            logging.info("InfluxDB connection closed")
+            logger.info("InfluxDB connection closed")
 
 # Global connection manager
 influx_manager = InfluxConnectionManager()
@@ -199,18 +195,18 @@ def is_nasdaq_trading_hours(check_time_utc: Optional[dt] = None) -> bool:
     et_time = check_time_utc.astimezone(et_zone)
     
     if et_time.weekday() >= 5:
-        logging.info("Skipping operation: It's the weekend, NASDAQ is closed.")
+        logger.info("Skipping operation: It's the weekend, NASDAQ is closed.")
         return False
     
     trading_start = dt_time(9, 30)
     trading_end = dt_time(16, 0)
     
     if trading_start <= et_time.time() <= trading_end:
-        logging.warning(
+        logger.warning(
             f"Current time {et_time.time()} is within NASDAQ trading hours. Deferring operations.")
         return True
     
-    logging.info(f"Current time {et_time.time()} is outside NASDAQ trading hours.")
+    logger.info(f"Current time {et_time.time()} is outside NASDAQ trading hours.")
     return False
 
 def get_last_completed_session_end_time_utc() -> dt:
@@ -229,25 +225,97 @@ def get_last_completed_session_end_time_utc() -> dt:
 
 def get_latest_timestamp(symbol: str, measurement_suffix: str) -> Optional[dt]:
     """Get the latest timestamp for a symbol and measurement."""
-    sanitized_symbol = re.escape(symbol)
-    measurement_regex = f"^ohlc_{sanitized_symbol}_\\d{{8}}_{measurement_suffix}$"
+    # Try the most efficient method first
+    result = get_latest_timestamp_by_timeframe(symbol, measurement_suffix)
+    if result:
+        return result
+    
+    # Fallback to simpler method if needed
+    return get_latest_timestamp_simple(symbol, measurement_suffix)
+
+
+def get_latest_timestamp_simple(symbol: str, measurement_suffix: str) -> Optional[dt]:
+    """Simpler approach that avoids schema collision."""
+    # Query without keeping multiple columns of different types
     flux_query = f'''
         from(bucket: "{INFLUX_BUCKET}")
-          |> range(start: 0)
-          |> filter(fn: (r) => r._measurement =~ /{measurement_regex}/ and r.symbol == "{symbol}")
+          |> range(start: -180d)
+          |> filter(fn: (r) => r.symbol == "{symbol}")
+          |> filter(fn: (r) => r._field == "close")
           |> last()
-          |> keep(columns: ["_time"])
     '''
     
     try:
         tables = influx_manager.query_with_retry(flux_query)
-        if not tables or not tables[0].records:
+        if not tables:
             return None
-        latest_time = tables[0].records[0].get_time()
-        return latest_time.replace(tzinfo=timezone.utc) if latest_time.tzinfo is None else latest_time
-    except Exception as e:
-        logging.error(f"Error getting latest timestamp for {symbol}/{measurement_suffix}: {e}")
+        
+        # Filter by measurement pattern in Python
+        pattern = re.compile(f"ohlc_{re.escape(symbol)}_\\d{{8}}_{measurement_suffix}$")
+        latest_time = None
+        latest_measurement = None
+        
+        for table in tables:
+            for record in table.records:
+                measurement = record.get_measurement()
+                if measurement and pattern.match(measurement):
+                    record_time = record.get_time()
+                    if record_time and (latest_time is None or record_time > latest_time):
+                        latest_time = record_time
+                        latest_measurement = measurement
+        
+        if latest_time:
+            logger.info(f"Found latest data timestamp as {latest_time} for {symbol} in measurement: {latest_measurement}")
+            return latest_time.replace(tzinfo=timezone.utc) if latest_time.tzinfo is None else latest_time
+        
+        logger.info(f"No data found for {symbol} with suffix {measurement_suffix}")
         return None
+        
+    except Exception as e:
+        logger.error(f"Simple method also failed for {symbol}/{measurement_suffix}: {e}")
+        return None
+
+
+def get_latest_timestamp_by_timeframe(symbol: str, measurement_suffix: str) -> Optional[dt]:
+    """Alternative method that constructs specific measurement names."""
+    # Based on the timeframe suffix, determine how many days back to look
+    days_to_check = {
+        "1s": 7, "5s": 7, "10s": 7, "15s": 7, "30s": 7, "45s": 7,
+        "1m": 180, "5m": 180, "10m": 180, "15m": 180, "30m": 180, "45m": 180,
+        "1h": 180, "1d": 720
+    }
+    
+    days = days_to_check.get(measurement_suffix, 30)
+    end_date = dt.now(timezone.utc)
+    start_date = end_date - timedelta(days=days)
+    
+    # Try to find data starting from the most recent date
+    current_date = end_date
+    while current_date >= start_date:
+        measurement_name = f"ohlc_{symbol}_{current_date.strftime('%Y%m%d')}_{measurement_suffix}"
+        
+        flux_query = f'''
+            from(bucket: "{INFLUX_BUCKET}")
+              |> range(start: -1d, stop: now())
+              |> filter(fn: (r) => r._measurement == "{measurement_name}")
+              |> filter(fn: (r) => r.symbol == "{symbol}")
+              |> filter(fn: (r) => r._field == "close")
+              |> last()
+        '''
+        
+        try:
+            tables = influx_manager.query_with_retry(flux_query)
+            if tables and tables[0].records:
+                latest_time = tables[0].records[0].get_time()
+                logger.info(f"Found latest data timestamp as {latest_time} for {symbol} in measurement: {measurement_name}")
+                return latest_time.replace(tzinfo=timezone.utc) if latest_time.tzinfo is None else latest_time
+        except:
+            pass  # Try next date
+        
+        current_date -= timedelta(days=1)
+    
+    logger.info(f"Missing data for {symbol} with suffix {measurement_suffix} in the last {days} days")
+    return None
 
 def format_data_for_influx(
     dtn_data: np.ndarray,
@@ -299,7 +367,7 @@ def format_data_for_influx(
 
 def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryConn):
     """Fetch and store historical data with improved error handling."""
-    logging.info(f"Fetching historical data for {symbol} (Exchange: {exchange})")
+    logger.info(f"Fetching historical data for {symbol} (Exchange: {exchange})")
     
     # Add delay between symbols to avoid overwhelming the server
     time.sleep(0.5)
@@ -354,7 +422,7 @@ def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryCon
                 
                 if influx_df is not None and not influx_df.empty:
                     grouped_by_measurement = influx_df.groupby('_measurement')
-                    logging.info(f"Writing {len(influx_df)} points to {len(grouped_by_measurement)} measurements for '{tf_name}'...")
+                    logger.info(f"Writing {len(influx_df)} points to {len(grouped_by_measurement)} measurements for '{tf_name}'...")
                     
                     for name, group_df in grouped_by_measurement:
                         influx_manager.write_with_retry(
@@ -364,70 +432,73 @@ def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryCon
                             tag_columns=['symbol', 'exchange']
                         )
                     
-                    logging.info(f"Write complete for {tf_name}")
-                    
+                    logger.info(f"Write complete for {tf_name}")
+        except iq.exceptions.NoDataError:
+            # <<< FIX: Gracefully handle NoDataError >>>
+            logger.info(f"No new data available for {symbol} ({tf_name}). Database is up to date.")
         except Exception as e:
-            logging.error(f"Error processing {tf_name} for {symbol}: {e}", exc_info=True)
+            logger.error(f"Error processing {tf_name} for {symbol}: {e}", exc_info=True)
             # Continue with next timeframe instead of failing completely
             continue
 
 def daily_update(symbols_to_update: List[str], exchange: str):
     """Performs the daily update with improved error handling."""
-    logging.info("--- Checking conditions for Daily Update Process ---")
+    logger.info("--- Checking conditions for Daily Update Process ---")
     
     if is_nasdaq_trading_hours():
-        logging.warning("Aborting daily update: operation not permitted during trading hours.")
+        logger.warning("Aborting daily update: operation not permitted during trading hours.")
         return
     
-    logging.info("--- Starting Daily Update Process ---")
+    logger.info("--- Starting Daily Update Process ---")
     
     # Check InfluxDB health before starting
     if not influx_manager.ensure_connection():
-        logging.error("Cannot connect to InfluxDB. Aborting daily update.")
+        logger.error("Cannot connect to InfluxDB. Aborting daily update.")
         return
     
     hist_conn = get_iqfeed_history_conn()
     if hist_conn is None:
-        logging.error("Could not get IQFeed connection. Aborting daily update.")
+        logger.error("Could not get IQFeed connection. Aborting daily update.")
         return
     
     with iq.ConnConnector([hist_conn]):
         for i, symbol in enumerate(symbols_to_update):
             try:
-                logging.info(f"Processing symbol {i+1}/{len(symbols_to_update)}: {symbol}")
+                logger.info(f"Processing symbol {i+1}/{len(symbols_to_update)}: {symbol}")
                 fetch_and_store_history(symbol, exchange, hist_conn)
             except Exception as e:
-                logging.error(f"Failed to process {symbol}: {e}")
+                logger.error(f"Failed to process {symbol}: {e}")
                 # Continue with next symbol
                 continue
     
-    logging.info("--- Daily Update Process Finished ---")
+    logger.info("--- Daily Update Process Finished ---")
 
 def process_symbols_from_redis():
     """Fetches symbols from Redis and triggers daily_update."""
-    logging.info("--- Fetching symbols from Redis for OHLC update ---")
+    logger.info("--- Fetching symbols from Redis for OHLC update ---")
     
     try:
-        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        REDIS_URL = settings.REDIS_URL
+        r = redis.Redis.from_url(REDIS_URL)
         r.ping()
     except redis.exceptions.ConnectionError as e:
-        logging.error(f"Could not connect to Redis: {e}. Aborting OHLC update.")
+        logger.error(f"Could not connect to Redis: {e}. Aborting OHLC update.")
         return
     
     symbols_data_json = r.get("dtn:ingestion:symbols")
     
     if not symbols_data_json:
-        logging.warning("No symbols found in Redis. Aborting OHLC update.")
+        logger.warning("No symbols found in Redis. Aborting OHLC update.")
         return
     
     try:
         symbols_data = json.loads(symbols_data_json)
     except json.JSONDecodeError as e:
-        logging.error(f"Error decoding symbols from Redis: {e}")
+        logger.error(f"Error decoding symbols from Redis: {e}")
         return
     
     if not isinstance(symbols_data, list):
-        logging.error("Symbols data from Redis is not a list.")
+        logger.error("Symbols data from Redis is not a list.")
         return
     
     # Group symbols by exchange
@@ -441,46 +512,47 @@ def process_symbols_from_redis():
             symbols_by_exchange[exchange].append(symbol)
     
     if not symbols_by_exchange:
-        logging.warning("No valid symbols found in Redis.")
+        logger.warning("No valid symbols found in Redis.")
         return
     
     for exchange, symbols_to_update in symbols_by_exchange.items():
-        logging.info(f"Processing {len(symbols_to_update)} symbols for exchange: {exchange}")
+        logger.info(f"Processing {len(symbols_to_update)} symbols for exchange: {exchange}")
         daily_update(symbols_to_update, exchange)
 
 def scheduled_daily_update():
     """Wrapper function for the scheduler."""
-    logging.info("--- Triggering Scheduled Daily OHLC Update ---")
+    logger.info("--- Triggering Scheduled Daily OHLC Update ---")
     process_symbols_from_redis()
 
 def redis_pubsub_listener_ohlc():
     """Listens for Redis Pub/Sub messages."""
     try:
-        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        REDIS_URL = settings.REDIS_URL
+        r = redis.Redis.from_url(REDIS_URL)
         r.ping()
     except redis.exceptions.ConnectionError as e:
-        logging.error(f"Could not connect to Redis for Pub/Sub: {e}")
+        logger.error(f"Could not connect to Redis for Pub/Sub: {e}")
         return
     
     pubsub = r.pubsub()
     pubsub.subscribe("dtn:ingestion:symbol_updates")
-    logging.info("OHLC Pub/Sub listener subscribed to 'dtn:ingestion:symbol_updates'")
+    logger.info("OHLC Pub/Sub listener subscribed to 'dtn:ingestion:symbol_updates'")
     
     for message in pubsub.listen():
         if message['type'] == 'message':
-            logging.info(f"Received Pub/Sub message: {message['data']}")
+            logger.info(f"Received Pub/Sub message: {message['data']}")
             process_symbols_from_redis()
 
 if __name__ == '__main__':
     try:
-        logging.info("Starting OHLC Ingestion System...")
+        logger.info("Starting OHLC Ingestion System...")
         
         # Initial run
-        logging.info("Running initial symbol update...")
+        logger.info("Running initial symbol update...")
         process_symbols_from_redis()
         
         # Initialize scheduler
-        logging.info("Initializing scheduler...")
+        logger.info("Initializing scheduler...")
         scheduler = BlockingScheduler(timezone="America/New_York")
         
         scheduler.add_job(
@@ -501,11 +573,11 @@ if __name__ == '__main__':
         )
         pubsub_thread.start()
         
-        logging.info("Scheduler started. Press Ctrl+C to exit...")
+        logger.info("Scheduler started. Press Ctrl+C to exit...")
         scheduler.start()
         
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Shutting down...")
+        logger.info("Shutting down...")
     finally:
         influx_manager.close()
-        logging.info("Shutdown complete.")
+        logger.info("Shutdown complete.")

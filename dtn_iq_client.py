@@ -15,7 +15,7 @@ This abstraction is critical because IQFeed client can be unstable or may need
 to be started manually, and this module automates that process.
 """
 
-import logging
+from logging_config import logger
 import time
 
 import pyiqfeed as iq
@@ -49,12 +49,12 @@ def _check_admin_port_connectivity() -> tuple[bool, str | None]:
             return True, None
         else:
             conn_check.disconnect()
-            logging.warning("Admin port check: connect() succeeded but IQFeed is not connected to DTN servers.")
+            logger.warning("Admin port check: connect() succeeded but IQFeed is not connected to DTN servers.")
             return False, "IQFeed service is running but not connected to backend servers."
     except ConnectionRefusedError:
         return False, "Connection refused. IQFeed service is likely not running."
     except Exception as e:
-        logging.error(f"Admin port check: An unexpected error occurred: {e}", exc_info=True)
+        logger.error(f"Admin port check: An unexpected error occurred: {e}", exc_info=True)
         return False, f"An unexpected error occurred during connection check: {e}"
 
 
@@ -74,17 +74,17 @@ def launch_iqfeed_service_if_needed():
         if is_connected_now:
             return  # Still good, no action needed.
         else:
-            logging.warning("Previously launched IQFeed service is no longer responsive. Attempting re-launch.")
+            logger.warning("Previously launched IQFeed service is no longer responsive. Attempting re-launch.")
             is_iqfeed_service_launched = False # Force a re-launch attempt.
 
     # Check for required DTN credentials in settings.
     if not all([settings.DTN_PRODUCT_ID, settings.DTN_LOGIN, settings.DTN_PASSWORD]):
         iqfeed_launch_error = "DTN IQFeed credentials are not fully configured in settings."
-        logging.error(iqfeed_launch_error)
+        logger.error(iqfeed_launch_error)
         is_iqfeed_service_launched = False
         return
 
-    logging.info("Attempting to launch or ensure IQFeed client is running...")
+    logger.info("Attempting to launch or ensure IQFeed client is running...")
     try:
         # Use the pyiqfeed FeedService to launch the client.
         svc = iq.FeedService(
@@ -100,18 +100,18 @@ def launch_iqfeed_service_if_needed():
         # After attempting launch, verify connectivity again.
         is_connected_after_launch, conn_error_msg = _check_admin_port_connectivity()
         if is_connected_after_launch:
-            logging.info("Successfully connected to IQFeed admin port after launch.")
+            logger.info("Successfully connected to IQFeed admin port after launch.")
             is_iqfeed_service_launched = True
             iqfeed_launch_error = None
         else:
             iqfeed_launch_error = (f"Failed to connect after launch attempt. Error: {conn_error_msg}. "
                                    "Please ensure IQConnect.exe can start and log in correctly.")
-            logging.error(iqfeed_launch_error)
+            logger.error(iqfeed_launch_error)
             is_iqfeed_service_launched = False
 
     except Exception as e:
         iqfeed_launch_error = f"An exception occurred during FeedService.launch(): {e}"
-        logging.error(iqfeed_launch_error, exc_info=True)
+        logger.error(iqfeed_launch_error, exc_info=True)
         is_iqfeed_service_launched = False
 
 
@@ -131,13 +131,13 @@ def get_iqfeed_history_conn() -> iq.HistoryConn | None:
     if is_iqfeed_service_launched:
         try:
             hist_conn = iq.HistoryConn(name="TradingAppHistoryConnection")
-            logging.debug("IQFeed HistoryConn instance created.")
+            logger.debug("IQFeed HistoryConn instance created.")
             return hist_conn
         except Exception as e:
-            logging.error(f"Failed to create IQFeed HistoryConn instance: {e}", exc_info=True)
+            logger.error(f"Failed to create IQFeed HistoryConn instance: {e}", exc_info=True)
             return None
     else:
-        logging.error(f"Cannot create HistoryConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
+        logger.error(f"Cannot create HistoryConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
         return None
 
 def get_iqfeed_streaming_conn() -> iq.QuoteConn | None:
@@ -157,13 +157,13 @@ def get_iqfeed_streaming_conn() -> iq.QuoteConn | None:
         try:
             # CORRECTED: Use QuoteConn for streaming summary data
             stream_conn = iq.QuoteConn(name="TradingAppStreamConnection")
-            logging.debug("IQFeed QuoteConn instance created.")
+            logger.debug("IQFeed QuoteConn instance created.")
             return stream_conn
         except Exception as e:
-            logging.error(f"Failed to create IQFeed QuoteConn instance: {e}", exc_info=True)
+            logger.error(f"Failed to create IQFeed QuoteConn instance: {e}", exc_info=True)
             return None
     else:
-        logging.error(f"Cannot create QuoteConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
+        logger.error(f"Cannot create QuoteConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
         return None
     
 def get_iqfeed_bar_conn() -> iq.BarConn | None:
@@ -182,13 +182,13 @@ def get_iqfeed_bar_conn() -> iq.BarConn | None:
     if is_iqfeed_service_launched:
         try:
             bar_conn = iq.BarConn(name="TradingAppBarConnection")
-            logging.debug("IQFeed BarConn instance created.")
+            logger.debug("IQFeed BarConn instance created.")
             return bar_conn
         except Exception as e:
-            logging.error(f"Failed to create IQFeed BarConn instance: {e}", exc_info=True)
+            logger.error(f"Failed to create IQFeed BarConn instance: {e}", exc_info=True)
             return None
     else:
-        logging.error(f"Cannot create BarConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
+        logger.error(f"Cannot create BarConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
         return None
     
 def get_iqfeed_quote_conn() -> iq.QuoteConn | None:
@@ -207,13 +207,13 @@ def get_iqfeed_quote_conn() -> iq.QuoteConn | None:
     if is_iqfeed_service_launched:
         try:
             quote_conn = iq.QuoteConn(name="TradingAppQuoteConnection")
-            logging.debug("IQFeed QuoteConn instance created.")
+            logger.debug("IQFeed QuoteConn instance created.")
             return quote_conn
         except Exception as e:
-            logging.error(f"Failed to create IQFeed QuoteConn instance: {e}", exc_info=True)
+            logger.error(f"Failed to create IQFeed QuoteConn instance: {e}", exc_info=True)
             return None
     else:
-        logging.error(f"Cannot create QuoteConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
+        logger.error(f"Cannot create QuoteConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
         return None
     
 def get_iqfeed_look_conn() -> iq.LookupConn | None:
@@ -232,11 +232,11 @@ def get_iqfeed_look_conn() -> iq.LookupConn | None:
     if is_iqfeed_service_launched:
         try:
             Lookup_conn = iq.LookupConn(name="TradingAppLookupConnection")
-            logging.debug("IQFeed LookupConn instance created.")
+            logger.debug("IQFeed LookupConn instance created.")
             return Lookup_conn
         except Exception as e:
-            logging.error(f"Failed to create IQFeed LookupConn instance: {e}", exc_info=True)
+            logger.error(f"Failed to create IQFeed LookupConn instance: {e}", exc_info=True)
             return None
     else:
-        logging.error(f"Cannot create LookupConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
+        logger.error(f"Cannot create LookupConn: IQFeed service is not running. Last error: {iqfeed_launch_error}")
         return None

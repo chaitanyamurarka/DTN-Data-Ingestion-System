@@ -1,4 +1,4 @@
-import logging
+from logging_config import logger
 import json
 import time
 from datetime import datetime, timezone
@@ -13,7 +13,7 @@ from dtn_iq_client import get_iqfeed_quote_conn, get_iqfeed_history_conn, launch
 from config import settings
 
 # --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(funcName)s - %(message)s')
+
 REDIS_URL = settings.REDIS_URL
 redis_client = redis.Redis.from_url(REDIS_URL)
 
@@ -30,7 +30,7 @@ class LiveTickListener(iq.SilentQuoteListener):
 
     def backfill_intraday_data(self, symbol: str, hist_conn: iq.HistoryConn):
         """On startup, fetch today's raw ticks from IQFeed to populate the cache."""
-        logging.info(f"Backfilling intraday raw ticks for {symbol}...")
+        logger.info(f"Backfilling intraday raw ticks for {symbol}...")
         try:
             # Fetch raw ticks for the current day instead of 1-second bars.
             today_ticks = hist_conn.request_ticks_for_days(
@@ -60,13 +60,13 @@ class LiveTickListener(iq.SilentQuoteListener):
                 pipeline.expire(cache_key, 86400) # Expire after 24 hours
                 pipeline.execute()
                 
-                logging.info(f"Successfully backfilled {len(today_ticks)} raw ticks for {symbol}.")
+                logger.info(f"Successfully backfilled {len(today_ticks)} raw ticks for {symbol}.")
             else:
-                logging.info(f"No intraday tick data found to backfill for {symbol}.")
+                logger.info(f"No intraday tick data found to backfill for {symbol}.")
         except iq.NoDataError:
-            logging.warning(f"No intraday tick data available to backfill for {symbol}.")
+            logger.warning(f"No intraday tick data available to backfill for {symbol}.")
         except Exception as e:
-            logging.error(f"Error during intraday tick backfill for {symbol}: {e}", exc_info=True)
+            logger.error(f"Error during intraday tick backfill for {symbol}: {e}", exc_info=True)
     
     def _publish_tick(self, symbol: str, price: float, volume: int):
         """
@@ -102,7 +102,7 @@ class LiveTickListener(iq.SilentQuoteListener):
                 if price > 0:
                     self._publish_tick(symbol, price, 0)
         except Exception as e:
-            logging.error(f"Error processing SUMMARY data: {e}. Data: {summary_data}", exc_info=True)
+            logger.error(f"Error processing SUMMARY data: {e}. Data: {summary_data}", exc_info=True)
 
     def process_update(self, update_data: np.ndarray) -> None:
         """Handles trade update messages and publishes them as raw ticks."""
@@ -117,17 +117,17 @@ class LiveTickListener(iq.SilentQuoteListener):
                 symbol = trade['Symbol'].decode('utf-8')
                 self._publish_tick(symbol, price, volume)
         except Exception as e:
-            logging.error(f"Error processing TRADE data: {e}. Data: {update_data}", exc_info=True)
+            logger.error(f"Error processing TRADE data: {e}. Data: {update_data}", exc_info=True)
 
 def update_watched_symbols(r_client, quote_conn, hist_conn, listener, watched_symbols_set):
     """
     Fetches the latest symbols from Redis and updates the watched symbols.
     """
-    logging.info("Checking for symbol updates from Redis...")
+    logger.info("Checking for symbol updates from Redis...")
     try:
         symbols_data_json = r_client.get("dtn:ingestion:symbols")
         if not symbols_data_json:
-            logging.warning("No symbols found in Redis key 'dtn:ingestion:symbols'. Unwatching all current symbols.")
+            logger.warning("No symbols found in Redis key 'dtn:ingestion:symbols'. Unwatching all current symbols.")
             symbols_from_redis = set()
         else:
             symbols_data = json.loads(symbols_data_json)
@@ -139,18 +139,18 @@ def update_watched_symbols(r_client, quote_conn, hist_conn, listener, watched_sy
         for symbol in symbols_to_add:
             listener.backfill_intraday_data(symbol, hist_conn)
             quote_conn.trades_watch(symbol)
-            logging.info(f"Dynamically added and watching {symbol} for live tick updates.")
+            logger.info(f"Dynamically added and watching {symbol} for live tick updates.")
             watched_symbols_set.add(symbol)
         
         for symbol in symbols_to_remove:
             quote_conn.unwatch(symbol)
-            logging.info(f"Dynamically unwatched {symbol}.")
+            logger.info(f"Dynamically unwatched {symbol}.")
             watched_symbols_set.remove(symbol)
 
     except json.JSONDecodeError as e:
-        logging.error(f"Error decoding symbols from Redis: {e}")
+        logger.error(f"Error decoding symbols from Redis: {e}")
     except Exception as e:
-        logging.error(f"Error updating watched symbols: {e}", exc_info=True)
+        logger.error(f"Error updating watched symbols: {e}", exc_info=True)
 
 def redis_pubsub_listener(r_client, quote_conn, hist_conn, listener, watched_symbols_set):
     """
@@ -158,11 +158,11 @@ def redis_pubsub_listener(r_client, quote_conn, hist_conn, listener, watched_sym
     """
     pubsub = r_client.pubsub()
     pubsub.subscribe("dtn:ingestion:symbol_updates")
-    logging.info("Subscribed to Redis channel 'dtn:ingestion:symbol_updates'.")
+    logger.info("Subscribed to Redis channel 'dtn:ingestion:symbol_updates'.")
 
     for message in pubsub.listen():
         if message['type'] == 'message':
-            logging.info(f"Received Redis Pub/Sub message: {message['data']}")
+            logger.info(f"Received Redis Pub/Sub message: {message['data']}")
             update_watched_symbols(r_client, quote_conn, hist_conn, listener, watched_symbols_set)
 
 def main():
@@ -172,17 +172,18 @@ def main():
     launch_iqfeed_service_if_needed()
     
     try:
-        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        REDIS_URL = settings.REDIS_URL
+        r = redis.Redis.from_url(REDIS_URL)
         r.ping()
     except redis.exceptions.ConnectionError as e:
-        logging.error(f"Could not connect to Redis: {e}. Exiting.")
+        logger.error(f"Could not connect to Redis: {e}. Exiting.")
         return
 
     quote_conn = get_iqfeed_quote_conn()
     hist_conn = get_iqfeed_history_conn()
 
     if not quote_conn or not hist_conn:
-        logging.error("Could not get IQFeed connections. Exiting.")
+        logger.error("Could not get IQFeed connections. Exiting.")
         return
 
     listener = LiveTickListener()
@@ -203,12 +204,12 @@ def main():
         pubsub_thread.start()
 
         try:
-            logging.info("Ingestion service is running. Press Ctrl+C to stop.")
+            logger.info("Ingestion service is running. Press Ctrl+C to stop.")
             # Keep the main thread alive
             while True:
                 time.sleep(1) 
         except KeyboardInterrupt:
-            logging.info("Stopping live data ingestion.")
+            logger.info("Stopping live data ingestion.")
             for symbol in watched_symbols:
                 quote_conn.unwatch(symbol)
 
