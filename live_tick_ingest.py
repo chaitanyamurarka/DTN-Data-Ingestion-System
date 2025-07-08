@@ -90,6 +90,7 @@ class LiveTickListener(iq.SilentQuoteListener):
         cache_key = f"intraday_ticks:{symbol}"
         pipeline = self.redis_client.pipeline()
         pipeline.rpush(cache_key, json.dumps(tick_data))
+        pipeline.expire(cache_key, 86400)
         pipeline.execute()
 
     def process_summary(self, summary_data: np.ndarray) -> None:
