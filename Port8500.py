@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware 
+from fastapi.middleware.cors import CORSMiddleware
 import redis
 import json
 import pandas as pd
@@ -9,9 +9,9 @@ from concurrent.futures import ProcessPoolExecutor
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from config.config import settings
-from config.logging_config import logger 
+from config.logging_config import logger
 
-# --- New Lifespan Manager ---
+# --- Lifespan Manager ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Code to run on startup
@@ -19,24 +19,24 @@ async def lifespan(app: FastAPI):
     global r, executor
     try:
         REDIS_URL = settings.REDIS_URL
-        r = redis.Redis.from_url(REDIS_URL, decode_responses=False) 
+        r = redis.Redis.from_url(REDIS_URL, decode_responses=False)
         r.ping()
         logger.info("Successfully connected to Redis!")
     except redis.exceptions.ConnectionError as e:
         logger.critical(f"Could not connect to Redis: {e}. Please ensure Redis server is running and accessible.")
         raise RuntimeError(f"Could not connect to Redis: {e}")
-    
+
     executor = ProcessPoolExecutor()
     logger.info("ProcessPoolExecutor initialized.")
-    
-    yield # The application runs here
+
+    yield  # The application runs here
 
     # Code to run on shutdown
     executor.shutdown(wait=True)
     logger.info("ProcessPoolExecutor shut down.")
     logger.info("Application shutdown initiated.")
 
-# Initialize FastAPI app with the new lifespan manager
+# Initialize FastAPI app with the lifespan manager
 app = FastAPI(lifespan=lifespan)
 
 # --- CORS Middleware ---
@@ -122,9 +122,9 @@ async def add_ingestion_symbol(symbol_data: SymbolUpdate):
     try:
         current_symbols_json = r.get("dtn:ingestion:symbols")
         current_symbols = json.loads(current_symbols_json) if current_symbols_json else []
-        
+
         new_symbol_dict = symbol_data.dict()
-        
+
         if not any(s['symbol'] == new_symbol_dict['symbol'] and s['exchange'] == new_symbol_dict['exchange'] for s in current_symbols):
             current_symbols.append(new_symbol_dict)
             r.set("dtn:ingestion:symbols", json.dumps(current_symbols))
@@ -144,20 +144,27 @@ async def search_symbols(
     exchange: str = Query(None, description="Optional exchange to filter by (e.g., NYSE, CME)"),
     security_type: str = Query(None, description="Optional security type to filter by (e.g., STOCK, FUTURES)")
 ):
+    """
+    Searches for symbols based on a search string, exchange, and security type.
+    Now correctly handles empty string parameters for exchange and security_type.
+    """
     logger.info(f"Received request to search symbols. Search string: '{search_string}', Exchange: '{exchange}', Security Type: '{security_type}'")
     all_keys = r.keys("symbols:*:*")
     logger.debug(f"Found {len(all_keys)} potential Redis keys for symbols.")
-    
+
     filtered_keys = []
     for key in all_keys:
         decoded_key = key.decode('utf-8')
         parts = decoded_key.split(':')
         key_exchange, key_security_type = parts[1], parts[2]
 
-        if (exchange is None or key_exchange.lower() == exchange.lower()) and \
-           (security_type is None or key_security_type.lower() == security_type.lower()):
+        # CORRECTED LOGIC: Use 'not exchange' to handle both None and ""
+        exchange_match = not exchange or key_exchange.lower() == exchange.lower()
+        security_type_match = not security_type or key_security_type.lower() == security_type.lower()
+
+        if exchange_match and security_type_match:
             filtered_keys.append(key)
-    
+
     logger.debug(f"Filtered down to {len(filtered_keys)} Redis keys.")
     if not filtered_keys:
         return []
@@ -173,25 +180,34 @@ async def search_symbols(
         return []
 
     loop = asyncio.get_running_loop()
+    # Use the global executor initialized in the lifespan manager
     search_tasks = [
         loop.run_in_executor(executor, search_dataframe, df_json_str, search_string)
         for df_json_str in all_dfs_json_strings
     ]
-    
+
     results_json = await asyncio.gather(*search_tasks)
     logger.debug(f"Completed {len(results_json)} DataFrame search tasks.")
 
     combined_df = pd.DataFrame()
     for res_json in results_json:
         if res_json:
-            res_df = pd.read_json(StringIO(res_json))
-            combined_df = pd.concat([combined_df, res_df], ignore_index=True)
-    
+            try:
+                # Ensure the JSON string is not empty or just "[]" before reading
+                if len(json.loads(res_json)) > 0:
+                    res_df = pd.read_json(StringIO(res_json))
+                    combined_df = pd.concat([combined_df, res_df], ignore_index=True)
+            except (json.JSONDecodeError, pd.errors.EmptyDataError):
+                logger.warning(f"Could not decode or read empty JSON: {res_json}")
+                continue
+
+
     if not combined_df.empty:
         combined_df.drop_duplicates(subset=['symbol', 'exchange', 'securityType'], inplace=True)
-    
+
     logger.info(f"Combined search results. Total unique symbols found: {len(combined_df)}")
     return combined_df.to_dict(orient='records')
+
 
 if __name__ == "__main__":
     logger.info("Starting Uvicorn server...")

@@ -1,5 +1,4 @@
-import SymbolSearch from "@/components/SymbolSearch";
-import IngestedSymbolsTable from "@/components/IngestedSymbolsTable"; // Import the new component
+import SymbolManagement from "@/components/SymbolManagement";
 
 export default function Home() {
   return (
@@ -12,10 +11,8 @@ export default function Home() {
       </div>
 
       <div className="w-full max-w-7xl">
-        <SymbolSearch />
-        <IngestedSymbolsTable /> {/* Add the new table here */}
+        <SymbolManagement />
       </div>
-
     </main>
   );
 }
