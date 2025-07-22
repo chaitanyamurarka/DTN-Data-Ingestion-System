@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware 
 import redis
 import json
 import pandas as pd
@@ -8,10 +9,9 @@ from concurrent.futures import ProcessPoolExecutor
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from config.config import settings
-from config.logging_config import logger # Import the logger
+from config.logging_config import logger 
 
 # --- New Lifespan Manager ---
-# This replaces the deprecated on_event('startup') and on_event('shutdown')
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Code to run on startup
@@ -19,12 +19,11 @@ async def lifespan(app: FastAPI):
     global r, executor
     try:
         REDIS_URL = settings.REDIS_URL
-        r = redis.Redis.from_url(REDIS_URL, decode_responses=False) # Keep decode_responses=False for raw bytes
+        r = redis.Redis.from_url(REDIS_URL, decode_responses=False) 
         r.ping()
         logger.info("Successfully connected to Redis!")
     except redis.exceptions.ConnectionError as e:
         logger.critical(f"Could not connect to Redis: {e}. Please ensure Redis server is running and accessible.")
-        # In a real app, you might not want to raise here, but handle it gracefully
         raise RuntimeError(f"Could not connect to Redis: {e}")
     
     executor = ProcessPoolExecutor()
@@ -40,10 +39,18 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app with the new lifespan manager
 app = FastAPI(lifespan=lifespan)
 
-# --- Global variables that will be initialized in the lifespan ---
-r: redis.Redis = None
-executor: ProcessPoolExecutor = None
+# --- CORS Middleware ---
+origins = [
+    "http://localhost:3000",
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Middleware to log incoming requests
 @app.middleware("http")
@@ -57,10 +64,8 @@ class SymbolUpdate(BaseModel):
     symbol: str
     exchange: str
 
-# This CPU-bound function is now correct as it expects a string
 def search_dataframe(df_json: str, search_string: str):
     logger.debug(f"Searching DataFrame for string: '{search_string}'")
-    # StringIO now correctly receives a string
     df = pd.read_json(StringIO(df_json))
     if search_string:
         search_string_lower = search_string.lower()
@@ -71,11 +76,29 @@ def search_dataframe(df_json: str, search_string: str):
     logger.debug(f"DataFrame search completed. Rows found: {len(df)}")
     return df.to_json(orient='records')
 
+@app.get("/get_ingestion_symbols/")
+async def get_ingestion_symbols():
+    """
+    Retrieves the current list of symbols being ingested.
+    """
+    logger.info("Received request to get ingestion symbols.")
+    try:
+        symbols_json = r.get("dtn:ingestion:symbols")
+        if symbols_json:
+            symbols = json.loads(symbols_json)
+            logger.info(f"Found {len(symbols)} ingestion symbols in Redis.")
+            return symbols
+        else:
+            logger.info("No ingestion symbols found in Redis.")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to get ingestion symbols: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get ingestion symbols: {e}")
 
 @app.post("/set_ingestion_symbols/")
 async def set_ingestion_symbols(symbols: list[SymbolUpdate]):
     """
-    Sets the complete list of symbols to be ingested by the OHLC and Live Tick services.
+    Sets the complete list of symbols to be ingested.
     This overwrites any existing list.
     """
     logger.info(f"Received request to set ingestion symbols. Payload: {len(symbols)} symbols.")
@@ -115,7 +138,6 @@ async def add_ingestion_symbol(symbol_data: SymbolUpdate):
         logger.error(f"Failed to add ingestion symbol: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to add ingestion symbol: {e}")
 
-
 @app.get("/search_symbols/")
 async def search_symbols(
     search_string: str = Query(None, description="Optional search string for symbol or description"),
@@ -140,8 +162,6 @@ async def search_symbols(
     if not filtered_keys:
         return []
 
-    # *** FIX IS HERE ***
-    # Fetch values and decode them from bytes to strings immediately.
     all_dfs_json_strings = []
     for key in filtered_keys:
         value_bytes = r.get(key)
@@ -172,7 +192,6 @@ async def search_symbols(
     
     logger.info(f"Combined search results. Total unique symbols found: {len(combined_df)}")
     return combined_df.to_dict(orient='records')
-
 
 if __name__ == "__main__":
     logger.info("Starting Uvicorn server...")

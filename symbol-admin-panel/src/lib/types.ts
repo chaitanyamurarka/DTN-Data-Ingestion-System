@@ -1,17 +1,18 @@
 export interface Symbol {
-  symbol: string;
-  exchange: string;
-  description?: string;
-  securityType?: string;
+    symbol: string;
+    description: string;
+    exchange: string;
+    securityType: string;
 }
-
-export interface SymbolUpdate {
-  symbol: string;
-  exchange: string;
-}
-
+  
 export interface SearchParams {
-  search_string?: string;
-  exchange?: string;
-  security_type?: string;
+    search_string?: string;
+    exchange?: string;
+    security_type?: string;
+}
+
+// New type for ingested symbols
+export interface IngestedSymbol {
+    symbol: string;
+    exchange: string;
 }
