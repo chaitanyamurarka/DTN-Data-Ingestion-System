@@ -1,4 +1,4 @@
-from logging_config import logger
+from config.logging_config import logger
 import json
 import time
 from datetime import datetime, timezone
@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 import threading # Import threading
 
 # Local imports
-from dtn_iq_client import get_iqfeed_quote_conn, get_iqfeed_history_conn, launch_iqfeed_service_if_needed
-from config import settings
+from scripts.dtn_iq_client import get_iqfeed_quote_conn, get_iqfeed_history_conn, launch_iqfeed_service_if_needed
+from config.config import settings
 
 # --- Configuration ---
 

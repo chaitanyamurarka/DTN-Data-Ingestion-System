@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 # .parent.parent is the project root (trading_platform_v5).
 # Then we append the .env filename.
 # This makes the path absolute and independent of where the script is run.
-env_path = Path(__file__).parent / ".env"
+env_path = Path(__file__).parent.parent / ".env"
 
 # Load the .env file from the calculated path if it exists.
 if env_path.exists():

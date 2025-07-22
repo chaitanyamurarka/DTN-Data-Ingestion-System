@@ -5,7 +5,8 @@ import redis
 import glob
 import requests # Import the requests library
 import shutil
-from logging_config import logger
+from config.logging_config import logger
+from config.config import settings
 
 # Configuration
 ZIP_FILE_URL = "https://github.com/chaitanyamurarka/DTN-IQFeed-Symbol-Downloader/raw/refs/heads/main/dtn_symbols/by_exchange.zip"
@@ -15,7 +16,10 @@ TARGET_EXCHANGES = ["NYSE", "CME", "NASDAQ", "EUREX"]
 
 # Redis connection
 try:
-    r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True) # decode_responses is good practice
+
+
+    REDIS_URL = settings.REDIS_URL
+    r = redis.Redis.from_url(REDIS_URL)
     r.ping()
     logger.info("Successfully connected to Redis!")
 except redis.exceptions.ConnectionError as e:

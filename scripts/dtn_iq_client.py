@@ -15,11 +15,11 @@ This abstraction is critical because IQFeed client can be unstable or may need
 to be started manually, and this module automates that process.
 """
 
-from logging_config import logger
+from config.logging_config import logger
 import time
 
 import pyiqfeed as iq
-from config import settings
+from config.config import settings
 
 # --- Module-level State ---
 # These global variables track the status of the IQFeed service connection.

@@ -26,9 +26,9 @@ import os
 import time
 import argparse
 import socket
-from logging_config import logger
+from config.logging_config import logger
 from typing import Optional
-from config import settings
+from config.config import settings
 
 # It's assumed that the 'app' package is in the Python path.
 # If running this script standalone, you might need to adjust the path.
@@ -39,10 +39,6 @@ except ImportError:
     print("Error: Could not import the 'app.pyiqfeed' module.")
     print("Please ensure the project's root directory is in your PYTHONPATH.")
     exit(1)
-
-
-# --- Basic Logging Configuration ---
-
 
 # --- Load Credentials from Environment Variables ---
 # This script requires the same DTN credentials as the main application.

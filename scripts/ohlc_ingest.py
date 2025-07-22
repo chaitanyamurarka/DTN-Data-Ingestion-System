@@ -1,5 +1,5 @@
 import os
-from logging_config import logger
+from config.logging_config import logger
 import time
 from datetime import datetime as dt, timezone, time as dt_time, timedelta
 import pytz
@@ -24,8 +24,8 @@ from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 # Local imports
 import pyiqfeed as iq
-from dtn_iq_client import get_iqfeed_history_conn
-from config import settings
+from scripts.dtn_iq_client import get_iqfeed_history_conn
+from config.config import settings
 
 # --- Configuration ---
 load_dotenv()
