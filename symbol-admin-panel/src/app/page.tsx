@@ -1,18 +1,25 @@
 import SymbolManagement from "@/components/SymbolManagement";
+import { BarChart2 } from 'lucide-react';
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center p-8 md:p-12 lg:p-24 bg-gray-50 dark:bg-gray-900">
-      <div className="z-10 w-full max-w-7xl items-center justify-between font-mono text-sm lg:flex mb-8">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          DTN Data Ingestion&nbsp;
-          <code className="font-mono font-bold">Admin Panel</code>
-        </p>
-      </div>
-
-      <div className="w-full max-w-7xl">
+    <div className="min-h-screen text-slate-200">
+      <main className="container mx-auto p-4 sm:p-6 lg:p-8">
+        <div className="text-center mb-12">
+            <div className="flex justify-center items-center gap-4">
+              <div className="p-3 bg-white/10 rounded-lg">
+                <BarChart2 size={32} className="text-cyan-300"/>
+              </div>
+              <h1 className="text-5xl font-bold text-white tracking-tight">
+                Symbol Admin Panel
+              </h1>
+            </div>
+            <p className="text-slate-400 mt-4 max-w-2xl mx-auto">
+              A centralized dashboard to search for new financial symbols and manage the active data ingestion pipeline.
+            </p>
+        </div>
         <SymbolManagement />
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }

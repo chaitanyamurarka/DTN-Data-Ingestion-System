@@ -1,17 +1,7 @@
 'use client';
 
-import {
-  Table,
-  TableHeader,
-  TableColumn,
-  TableBody,
-  TableRow,
-  TableCell,
-  Spinner,
-  Button,
-  Tooltip,
-} from '@nextui-org/react';
-import { Plus, CheckCircle, Upload } from 'lucide-react';
+import { Button, Tooltip, Spinner } from '@nextui-org/react';
+import { Plus, CheckCircle } from 'lucide-react';
 import { Symbol as SymbolType, IngestedSymbol } from '@/lib/types';
 import React from 'react';
 
@@ -19,30 +9,23 @@ interface SymbolTableProps {
   symbols: SymbolType[];
   onAddSymbol: (symbol: IngestedSymbol) => void;
   isLoading: boolean;
-  onBulkAction?: () => void;
 }
 
 const securityTypeColors: Record<string, string> = {
-  EQUITY: 'bg-green-100 text-green-800',
-  INDEX: 'bg-blue-100 text-blue-800',
-  MONEY: 'bg-yellow-100 text-yellow-800',
-  BONDS: 'bg-purple-100 text-purple-800',
-  FUTURE: 'bg-orange-100 text-orange-800',
-  FOPTION: 'bg-pink-100 text-pink-800',
+  STOCK: 'bg-green-900/50 text-green-300 border border-green-700',
+  FUTURES: 'bg-orange-900/50 text-orange-300 border border-orange-700',
 };
 
 const getSecurityTypeColor = (type?: string) => {
-  if (!type) return 'bg-gray-100 text-gray-800';
-  return securityTypeColors[type] || 'bg-gray-100 text-gray-800';
+  if (!type) return 'bg-slate-700 text-slate-300';
+  return securityTypeColors[type.toUpperCase()] || 'bg-slate-700 text-slate-300';
 };
 
 export default function SymbolTable({
   symbols,
   onAddSymbol,
   isLoading,
-  onBulkAction
 }: SymbolTableProps) {
-
   const [addedSymbols, setAddedSymbols] = React.useState<Set<string>>(new Set());
 
   const handleAddSymbol = (symbol: SymbolType) => {
@@ -51,59 +34,64 @@ export default function SymbolTable({
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <div className="p-4 border-b flex justify-between items-center">
-            <h2 className="text-lg font-semibold">Available Symbols ({symbols.length})</h2>
-            {onBulkAction && (
-                <Button color="secondary" onPress={onBulkAction} startContent={<Upload size={16} />}>
-                Bulk Upload
-                </Button>
-            )}
-        </div>
-        <Table aria-label="Table of available symbols">
-            <TableHeader>
-                <TableColumn>SYMBOL</TableColumn>
-                <TableColumn>DESCRIPTION</TableColumn>
-                <TableColumn>EXCHANGE</TableColumn>
-                <TableColumn>TYPE</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
-            </TableHeader>
-            <TableBody
-                items={symbols}
-                isLoading={isLoading}
-                loadingContent={<Spinner label="Loading..." />}
-                emptyContent={!isLoading ? 'No symbols found. Type in the search bar to begin.' : ' '}
-            >
-                {(item) => {
+    <div className="overflow-x-auto">
+        {/* The 'min-w-full' class has been removed below */}
+        <table className="text-sm">
+            <thead className="bg-slate-800">
+                <tr>
+                    <th scope="col" className="text-left font-medium text-slate-400 px-6 py-3 uppercase">Symbol</th>
+                    <th scope="col" className="text-left font-medium text-slate-400 px-6 py-3 uppercase w-2/5">Description</th>
+                    <th scope="col" className="text-left font-medium text-slate-400 px-6 py-3 uppercase">Exchange</th>
+                    <th scope="col" className="text-left font-medium text-slate-400 px-6 py-3 uppercase">Type</th>
+                    <th scope="col" className="text-right font-medium text-slate-400 px-6 py-3 uppercase">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {isLoading && (
+                    <tr>
+                        <td colSpan={5} className="text-center p-8">
+                            <Spinner label="Searching..." color="primary" />
+                        </td>
+                    </tr>
+                )}
+                {!isLoading && (!symbols || symbols.length === 0) && (
+                    <tr>
+                        <td colSpan={5} className="text-center p-8 text-slate-500">
+                             Type 3+ characters in the search bar to begin.
+                        </td>
+                    </tr>
+                )}
+                {!isLoading && symbols && symbols.map((item) => {
                     const key = `${item.symbol}-${item.exchange}`;
                     const isAdded = addedSymbols.has(key);
                     return (
-                        <TableRow key={key}>
-                            <TableCell>{item.symbol}</TableCell>
-                            <TableCell>{item.description}</TableCell>
-                            <TableCell>{item.exchange}</TableCell>
-                            <TableCell>
-                                <span className={`px-2 py-1 text-xs rounded ${getSecurityTypeColor(item.securityType)}`}>
-                                    {item.securityType || 'N/A'}
+                        <tr key={key} className="border-b border-slate-700 hover:bg-slate-700/50">
+                            <td className="px-6 py-3 font-semibold text-slate-200">{item.symbol}</td>
+                            <td className="px-6 py-3 text-slate-400">{item.description}</td>
+                            <td className="px-6 py-3 text-slate-300">{item.exchange}</td>
+                            <td className="px-6 py-3">
+                                <span className={`px-2.5 py-1 text-xs rounded-full ${getSecurityTypeColor(item.securityType)}`}>
+                                {item.securityType || 'N/A'}
                                 </span>
-                            </TableCell>
-                            <TableCell>
-                                <Tooltip content={isAdded ? "Symbol has been added" : "Add to ingestion list"}>
-                                    <Button
-                                        isIconOnly
-                                        color={isAdded ? "success" : "primary"}
-                                        variant="flat"
-                                        onPress={() => handleAddSymbol(item)}
-                                    >
-                                        {isAdded ? <CheckCircle size={16} /> : <Plus size={16} />}
-                                    </Button>
+                            </td>
+                            <td className="px-6 py-3 text-right">
+                                <Tooltip content={isAdded ? "Symbol has been added" : "Add to ingestion list"} color="primary">
+                                <Button
+                                    isIconOnly
+                                    color={isAdded ? "success" : "primary"}
+                                    variant={isAdded ? "flat" : "solid"}
+                                    onPress={() => handleAddSymbol(item)}
+                                    aria-label={isAdded ? "Added" : "Add"}
+                                >
+                                    {isAdded ? <CheckCircle size={18} /> : <Plus size={18} />}
+                                </Button>
                                 </Tooltip>
-                            </TableCell>
-                        </TableRow>
-                    )
-                }}
-            </TableBody>
-        </Table>
+                            </td>
+                        </tr>
+                    );
+                })}
+            </tbody>
+        </table>
     </div>
   );
 }
