@@ -15,12 +15,11 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient, Point, WriteOptions, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.client.exceptions import InfluxDBError
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from urllib3.util.retry import Retry
-from urllib3.exceptions import NewConnectionError, MaxRetryError
+from urllib3.exceptions import NewConnectionError
 
 # Local imports
 import pyiqfeed as iq
@@ -36,6 +35,16 @@ INFLUX_URL = settings.INFLUX_URL
 INFLUX_TOKEN = settings.INFLUX_TOKEN
 INFLUX_ORG = settings.INFLUX_ORG
 INFLUX_BUCKET = settings.INFLUX_BUCKET
+
+# Redis Client Initialization
+try:
+    redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_client.ping()
+    logger.info("Successfully connected to Redis.")
+except redis.exceptions.ConnectionError as e:
+    logger.error(f"Could not connect to Redis. Aborting. Error: {e}")
+    exit(1)
+
 
 # Connection retry configuration
 MAX_RETRIES = 3
@@ -62,7 +71,6 @@ class InfluxConnectionManager:
             if self.client:
                 self.client.close()
             
-            # Create client with custom retry configuration
             retries = Retry(
                 total=MAX_RETRIES,
                 backoff_factor=1,
@@ -77,14 +85,13 @@ class InfluxConnectionManager:
                 retries=retries
             )
             
-            # Use batch writing with error callbacks
             write_options = WriteOptions(
                 batch_size=BATCH_SIZE,
-                flush_interval=10_000,  # milliseconds
-                jitter_interval=2_000,  # milliseconds
-                retry_interval=5_000,   # milliseconds
+                flush_interval=10_000,
+                jitter_interval=2_000,
+                retry_interval=5_000,
                 max_retries=3,
-                max_retry_delay=30_000,  # milliseconds
+                max_retry_delay=30_000,
                 exponential_base=2
             )
             
@@ -102,13 +109,11 @@ class InfluxConnectionManager:
         """Check if InfluxDB is healthy and accessible."""
         current_time = time.time()
         
-        # Skip health check if we've checked recently
         if (self._last_health_check and 
             current_time - self._last_health_check < self._health_check_interval):
             return self._is_healthy
         
         try:
-            # Perform a simple ping to check connectivity
             self.client.ping()
             self._is_healthy = True
             self._last_health_check = current_time
@@ -135,7 +140,6 @@ class InfluxConnectionManager:
                 if not self.ensure_connection():
                     raise ConnectionError("Cannot establish connection to InfluxDB")
                 
-                # Write data
                 self.write_api.write(
                     bucket=bucket,
                     record=record,
@@ -144,15 +148,14 @@ class InfluxConnectionManager:
                     write_precision=WritePrecision.NS
                 )
                 
-                # If successful, break out of retry loop
                 return
                 
             except (NewConnectionError, ConnectionError, InfluxDBError) as e:
                 logger.warning(f"Write attempt {attempt + 1} failed: {e}")
                 
                 if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
-                    self.initialize_connection()  # Try to reconnect
+                    time.sleep(RETRY_DELAY * (2 ** attempt))
+                    self.initialize_connection()
                 else:
                     logger.error(f"Failed to write after {MAX_RETRIES} attempts")
                     raise
@@ -225,18 +228,14 @@ def get_last_completed_session_end_time_utc() -> dt:
 
 def get_latest_timestamp(symbol: str, measurement_suffix: str) -> Optional[dt]:
     """Get the latest timestamp for a symbol and measurement."""
-    # Try the most efficient method first
     result = get_latest_timestamp_by_timeframe(symbol, measurement_suffix)
     if result:
         return result
-    
-    # Fallback to simpler method if needed
     return get_latest_timestamp_simple(symbol, measurement_suffix)
 
 
 def get_latest_timestamp_simple(symbol: str, measurement_suffix: str) -> Optional[dt]:
     """Simpler approach that avoids schema collision."""
-    # Query without keeping multiple columns of different types
     flux_query = f'''
         from(bucket: "{INFLUX_BUCKET}")
           |> range(start: -180d)
@@ -250,7 +249,6 @@ def get_latest_timestamp_simple(symbol: str, measurement_suffix: str) -> Optiona
         if not tables:
             return None
         
-        # Filter by measurement pattern in Python
         pattern = re.compile(f"ohlc_{re.escape(symbol)}_\\d{{8}}_{measurement_suffix}$")
         latest_time = None
         latest_measurement = None
@@ -278,7 +276,6 @@ def get_latest_timestamp_simple(symbol: str, measurement_suffix: str) -> Optiona
 
 def get_latest_timestamp_by_timeframe(symbol: str, measurement_suffix: str) -> Optional[dt]:
     """Alternative method that constructs specific measurement names."""
-    # Based on the timeframe suffix, determine how many days back to look
     days_to_check = {
         "1s": 7, "5s": 7, "10s": 7, "15s": 7, "30s": 7, "45s": 7,
         "1m": 180, "5m": 180, "10m": 180, "15m": 180, "30m": 180, "45m": 180,
@@ -289,7 +286,6 @@ def get_latest_timestamp_by_timeframe(symbol: str, measurement_suffix: str) -> O
     end_date = dt.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # Try to find data starting from the most recent date
     current_date = end_date
     while current_date >= start_date:
         measurement_name = f"ohlc_{symbol}_{current_date.strftime('%Y%m%d')}_{measurement_suffix}"
@@ -310,7 +306,7 @@ def get_latest_timestamp_by_timeframe(symbol: str, measurement_suffix: str) -> O
                 logger.info(f"Found latest data timestamp as {latest_time} for {symbol} in measurement: {measurement_name}")
                 return latest_time.replace(tzinfo=timezone.utc) if latest_time.tzinfo is None else latest_time
         except:
-            pass  # Try next date
+            pass
         
         current_date -= timedelta(days=1)
     
@@ -365,35 +361,58 @@ def format_data_for_influx(
     final_cols = ['open', 'high', 'low', 'close', 'volume', 'symbol', 'exchange', '_measurement']
     return df[[col for col in final_cols if col in df.columns]]
 
+def get_system_config_from_redis():
+    """Fetches system configuration from Redis, returns defaults if not found."""
+    try:
+        config_json = redis_client.get("dtn:system:config")
+        if config_json:
+            logger.info("Loaded system config from Redis.")
+            return json.loads(config_json)
+    except Exception as e:
+        logger.error(f"Could not load system config from Redis: {e}", exc_info=True)
+
+    logger.info("Using default system config.")
+    return {
+        "schedule_hour": 20,
+        "schedule_minute": 1,
+        "timeframes_to_fetch": {
+            "1s": 7, "5s": 7, "10s": 7, "15s": 7, "30s": 7, "45s": 7,
+            "1m": 180, "5m": 180, "10m": 180, "15m": 180, "30m": 180, "45m": 180,
+            "1h": 180, "1d": 720
+        }
+    }
+
+config = get_system_config_from_redis()
+
 def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryConn):
-    """Fetch and store historical data with improved error handling."""
+    """Fetch and store historical data using config."""
     logger.info(f"Fetching historical data for {symbol} (Exchange: {exchange})")
     
-    # Add delay between symbols to avoid overwhelming the server
     time.sleep(0.5)
     
     last_session_end_utc = get_last_completed_session_end_time_utc()
-    
+
+    timeframes_to_fetch_config = config.get('timeframes_to_fetch', {})
+
     timeframes_to_fetch = {
-        "1s":   {"interval": 1,    "type": "s", "days": 7},
-        "5s":   {"interval": 5,    "type": "s", "days": 7},
-        "10s":  {"interval": 10,   "type": "s", "days": 7},
-        "15s":  {"interval": 15,   "type": "s", "days": 7},
-        "30s":  {"interval": 30,   "type": "s", "days": 7},
-        "45s":  {"interval": 45,   "type": "s", "days": 7},
-        "1m":   {"interval": 60,   "type": "s", "days": 180},
-        "5m":   {"interval": 300,  "type": "s", "days": 180},
-        "10m":  {"interval": 600,  "type": "s", "days": 180},
-        "15m":  {"interval": 900,  "type": "s", "days": 180},
-        "30m":  {"interval": 1800, "type": "s", "days": 180},
-        "45m":  {"interval": 2700, "type": "s", "days": 180},
-        "1h":   {"interval": 3600, "type": "s", "days": 180},
-        "1d":   {"interval": 1,    "type": "d", "days": 720}
+        "1s":   {"interval": 1,    "type": "s", "days": timeframes_to_fetch_config.get("1s", 7)},
+        "5s":   {"interval": 5,    "type": "s", "days": timeframes_to_fetch_config.get("5s", 7)},
+        "10s":  {"interval": 10,   "type": "s", "days": timeframes_to_fetch_config.get("10s", 7)},
+        "15s":  {"interval": 15,   "type": "s", "days": timeframes_to_fetch_config.get("15s", 7)},
+        "30s":  {"interval": 30,   "type": "s", "days": timeframes_to_fetch_config.get("30s", 7)},
+        "45s":  {"interval": 45,   "type": "s", "days": timeframes_to_fetch_config.get("45s", 7)},
+        "1m":   {"interval": 60,   "type": "s", "days": timeframes_to_fetch_config.get("1m", 180)},
+        "5m":   {"interval": 300,  "type": "s", "days": timeframes_to_fetch_config.get("5m", 180)},
+        "10m":  {"interval": 600,  "type": "s", "days": timeframes_to_fetch_config.get("10m", 180)},
+        "15m":  {"interval": 900,  "type": "s", "days": timeframes_to_fetch_config.get("15m", 180)},
+        "30m":  {"interval": 1800, "type": "s", "days": timeframes_to_fetch_config.get("30m", 180)},
+        "45m":  {"interval": 2700, "type": "s", "days": timeframes_to_fetch_config.get("45m", 180)},
+        "1h":   {"interval": 3600, "type": "s", "days": timeframes_to_fetch_config.get("1h", 180)},
+        "1d":   {"interval": 1,    "type": "d", "days": timeframes_to_fetch_config.get("1d", 720)}
     }
     
     for tf_name, params in timeframes_to_fetch.items():
         try:
-            # Add small delay between timeframes
             time.sleep(0.2)
             
             latest_timestamp = get_latest_timestamp(symbol, tf_name)
@@ -434,15 +453,13 @@ def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryCon
                     
                     logger.info(f"Write complete for {tf_name}")
         except iq.exceptions.NoDataError:
-            # <<< FIX: Gracefully handle NoDataError >>>
             logger.info(f"No new data available for {symbol} ({tf_name}). Database is up to date.")
         except Exception as e:
             logger.error(f"Error processing {tf_name} for {symbol}: {e}", exc_info=True)
-            # Continue with next timeframe instead of failing completely
             continue
 
 def daily_update(symbols_to_update: List[str], exchange: str):
-    """Performs the daily update with improved error handling."""
+    """Performs the daily update."""
     logger.info("--- Checking conditions for Daily Update Process ---")
     
     if is_nasdaq_trading_hours():
@@ -451,7 +468,6 @@ def daily_update(symbols_to_update: List[str], exchange: str):
     
     logger.info("--- Starting Daily Update Process ---")
     
-    # Check InfluxDB health before starting
     if not influx_manager.ensure_connection():
         logger.error("Cannot connect to InfluxDB. Aborting daily update.")
         return
@@ -468,7 +484,6 @@ def daily_update(symbols_to_update: List[str], exchange: str):
                 fetch_and_store_history(symbol, exchange, hist_conn)
             except Exception as e:
                 logger.error(f"Failed to process {symbol}: {e}")
-                # Continue with next symbol
                 continue
     
     logger.info("--- Daily Update Process Finished ---")
@@ -477,15 +492,7 @@ def process_symbols_from_redis():
     """Fetches symbols from Redis and triggers daily_update."""
     logger.info("--- Fetching symbols from Redis for OHLC update ---")
     
-    try:
-        REDIS_URL = settings.REDIS_URL
-        r = redis.Redis.from_url(REDIS_URL)
-        r.ping()
-    except redis.exceptions.ConnectionError as e:
-        logger.error(f"Could not connect to Redis: {e}. Aborting OHLC update.")
-        return
-    
-    symbols_data_json = r.get("dtn:ingestion:symbols")
+    symbols_data_json = redis_client.get("dtn:ingestion:symbols")
     
     if not symbols_data_json:
         logger.warning("No symbols found in Redis. Aborting OHLC update.")
@@ -501,7 +508,6 @@ def process_symbols_from_redis():
         logger.error("Symbols data from Redis is not a list.")
         return
     
-    # Group symbols by exchange
     symbols_by_exchange: Dict[str, List[str]] = {}
     for item in symbols_data:
         symbol = item.get("symbol")
@@ -524,30 +530,47 @@ def scheduled_daily_update():
     logger.info("--- Triggering Scheduled Daily OHLC Update ---")
     process_symbols_from_redis()
 
-def redis_pubsub_listener_ohlc():
-    """Listens for Redis Pub/Sub messages."""
-    try:
-        REDIS_URL = settings.REDIS_URL
-        r = redis.Redis.from_url(REDIS_URL)
-        r.ping()
-    except redis.exceptions.ConnectionError as e:
-        logger.error(f"Could not connect to Redis for Pub/Sub: {e}")
-        return
-    
-    pubsub = r.pubsub()
-    pubsub.subscribe("dtn:ingestion:symbol_updates")
-    logger.info("OHLC Pub/Sub listener subscribed to 'dtn:ingestion:symbol_updates'")
-    
+def redis_pubsub_listener_ohlc(pubsub):
+    """Listens for Redis Pub/Sub messages for symbol updates."""
+    logger.info("OHLC symbol listener subscribed to 'dtn:ingestion:symbol_updates'")
     for message in pubsub.listen():
         if message['type'] == 'message':
-            logger.info(f"Received Pub/Sub message: {message['data']}")
+            logger.info(f"Received symbol update message: {message['data']}")
             process_symbols_from_redis()
+            
+def redis_config_listener(pubsub, scheduler):
+    """Listens for Redis Pub/Sub messages for config updates and reschedules the job."""
+    global config
+    logger.info("OHLC config listener subscribed to 'dtn:system:config_updates'")
+    for message in pubsub.listen():
+        if message['type'] == 'message':
+            logger.info(f"Received config update message: {message['data']}")
+            config = get_system_config_from_redis()
+            
+            # Reschedule the daily update job with the new time
+            new_hour = config.get('schedule_hour', 20)
+            new_minute = config.get('schedule_minute', 1)
+            
+            try:
+                scheduler.reschedule_job(
+                    'daily_update_job', 
+                    trigger=CronTrigger(
+                        hour=new_hour,
+                        minute=new_minute,
+                        second=0,
+                        timezone=pytz.timezone('America/New_York')
+                    )
+                )
+                logger.info(f"Successfully rescheduled daily update job to {new_hour:02d}:{new_minute:02d} ET.")
+            except Exception as e:
+                logger.error(f"Failed to reschedule job: {e}", exc_info=True)
+
 
 if __name__ == '__main__':
     try:
         logger.info("Starting OHLC Ingestion System...")
         
-        # Initial run
+        # Initial run on startup
         logger.info("Running initial symbol update...")
         process_symbols_from_redis()
         
@@ -555,29 +578,46 @@ if __name__ == '__main__':
         logger.info("Initializing scheduler...")
         scheduler = BlockingScheduler(timezone="America/New_York")
         
+        schedule_hour = config.get('schedule_hour', 20)
+        schedule_minute = config.get('schedule_minute', 1)
+
         scheduler.add_job(
             scheduled_daily_update,
             trigger=CronTrigger(
-                hour=20,
-                minute=1,
+                hour=schedule_hour,
+                minute=schedule_minute,
                 second=0,
                 timezone=pytz.timezone('America/New_York')
             ),
+            id="daily_update_job", # Assign an ID to the job
             name="Daily Historical Market Data Ingestion"
         )
         
-        # Start Redis Pub/Sub listener
-        pubsub_thread = threading.Thread(
+        # Setup Redis Pub/Sub listeners in separate threads
+        symbol_pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+        symbol_pubsub.subscribe("dtn:ingestion:symbol_updates")
+        symbol_thread = threading.Thread(
             target=redis_pubsub_listener_ohlc,
+            args=(symbol_pubsub,),
             daemon=True
         )
-        pubsub_thread.start()
+        symbol_thread.start()
+
+        config_pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+        config_pubsub.subscribe("dtn:system:config_updates")
+        config_thread = threading.Thread(
+            target=redis_config_listener,
+            args=(config_pubsub, scheduler),
+            daemon=True
+        )
+        config_thread.start()
         
-        logger.info("Scheduler started. Press Ctrl+C to exit...")
+        logger.info("Scheduler and listeners started. Press Ctrl+C to exit...")
         scheduler.start()
         
     except (KeyboardInterrupt, SystemExit):
         logger.info("Shutting down...")
     finally:
         influx_manager.close()
+        redis_client.close()
         logger.info("Shutdown complete.")
