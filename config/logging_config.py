@@ -3,7 +3,7 @@ from logging.handlers import RotatingFileHandler
 import os
 
 # Define the log file path
-LOG_FILE = "C:/Users/Administrator/Downloads/DTN-Data-Ingestion-System/app.log"
+LOG_FILE = "C:/Users/Administrator/Downloads/Code/DTN-Data-Ingestion-System/app.log"
 
 def setup_logging():
     """
